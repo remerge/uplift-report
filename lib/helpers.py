@@ -21,6 +21,9 @@ from IPython.display import display  # so we can run this as script as well
 Define a few helper functions to load and cache data.
 """
 
+VERSION = '5.4.13'
+cache_folder = "cache-v{0}".format(VERSION)
+
 # constants for groups
 TEST = True
 CONTROL = False
@@ -29,18 +32,16 @@ CONTROL = False
 def improve_types(df):
     df['ts'] = pd.to_datetime(df['ts'])
     df['ts'] = (df['ts'].astype('int64') / 1e9).astype('int32')
-    # preserve the raw user id for export later
-    if not export_user_ids:
-        df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
+    df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
     df['ab_test_group'] = df['ab_test_group'].transform(lambda g: g == 'test')
     return df
 
-def path(audience):
+def path(customer, audience):
     return "s3://remerge-customers/{0}/uplift_data/{1}".format(customer, audience)
 
 # only keep rows where the event is a revenue event and drop the partner_event
 # column afterwards 
-def extract_revenue_events(df):
+def extract_revenue_events(df, revenue_event):
     df = df[df.partner_event == revenue_event]
     return df.drop(columns=['partner_event'])
     
@@ -83,12 +84,12 @@ def from_parquet(filename):
 
 # helper to download CSV files, convert to DF and print time needed
 # caches files locally and on S3 to be reused
-def read_csv(audience, source, date, columns=None, chunk_filter_fn=None, chunk_size=10 ** 6):
+def read_csv(customer, audience, source, date, columns=None, revenue_event=None, chunk_filter_fn=None, chunk_size=10 ** 6):
     now = datetime.now()
 
     date_str = date.strftime('%Y%m%d')
     
-    filename = '{0}/{1}/{2}.csv.gz'.format(path(audience), source, date_str)
+    filename = '{0}/{1}/{2}.csv.gz'.format(path(customer,audience), source, date_str)
 
     # local cache
     cache_dir = '{0}/{1}/{2}'.format(cache_folder, audience, source)
@@ -98,7 +99,7 @@ def read_csv(audience, source, date, columns=None, chunk_filter_fn=None, chunk_s
     cache_filename = '{0}/{1}.parquet'.format(cache_dir, date_str)
 
     # s3 cache (useful if we don't have enough space on the Colab instance)
-    s3_cache_filename = '{0}/{1}/{2}/{3}.parquet'.format(path(audience),
+    s3_cache_filename = '{0}/{1}/{2}/{3}.parquet'.format(path(customer, audience),
                                                            source, cache_folder, date_str)
 
     if source == 'attributions':
@@ -107,7 +108,7 @@ def read_csv(audience, source, date, columns=None, chunk_filter_fn=None, chunk_s
 
         # s3 cache (useful if we don't have enough space on the Colab instance)
         s3_cache_filename = '{0}/{1}/{2}/{3}-{4}.parquet' \
-            .format(path(audience), source, cache_folder, date_str, revenue_event)
+            .format(path(customer, audience), source, cache_folder, date_str, revenue_event)
 
     fs = s3fs.S3FileSystem(anon=False)
     fs.connect_timeout = 10  # defaults to 5
@@ -144,7 +145,7 @@ def read_csv(audience, source, date, columns=None, chunk_filter_fn=None, chunk_s
     for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False,
                              **read_csv_kwargs):
         if chunk_filter_fn:
-            filtered_chunk = chunk_filter_fn(chunk)
+            filtered_chunk = chunk_filter_fn(chunk, revenue_event)
         else:
             filtered_chunk = chunk
         
@@ -174,23 +175,19 @@ def read_csv(audience, source, date, columns=None, chunk_filter_fn=None, chunk_s
     return df
 
 """## DataFrame Helper Functions"""
-
 def calculate_ad_spend(df):
     ad_spend_micros = df[(df.event_type == 'buying_conversion') & (df.ab_test_group == TEST)]['cost_eur'].sum()    
     return ad_spend_micros / 10 ** 6
 
-"""The dataframe created by `marked`  will contain all mark events (without the invalid marks). Remerge marks users per campaign.  If a user was marked once for an audience he will have the same group allocation for consecutive marks (different campaigns) unless manually reset on audience level."""
-
+"""The dataframe created by `marked` will contain all mark events. Remerge marks users per campaign.  If a user was marked once for an audience he will have the same group allocation for consecutive marks (different campaigns) unless manually reset on audience level."""
 def marked(df):
     mark_df = df[df.event_type == 'mark']
     
     # we dont need the event_type anymore (to save memory)
     mark_df = mark_df.drop(columns=['event_type'])
-    
-    mark_df = mark_df[~mark_df['user_id'].isin(double_marked_users.index)]
-       
+         
     sorted_mark_df = mark_df.sort_values('ts')
-    
+   
     depuplicated_mark_df = sorted_mark_df.drop_duplicates(['user_id'])
     
     return depuplicated_mark_df
@@ -208,7 +205,6 @@ Due to some inconsistencies in the measurement we need to clean the data before 
 ### Remove duplicated events coming from AppsFlyer
 AppsFlyer is sending us two revenue events if they attribute the event to us. One of the events they send us does not contain attribution information and the other one does. Sadly, it is not possible for us to distingish correctly if an event is a duplicate or if the user actually triggered two events with nearly the same information. Therefore we rely on a heuristic. We consider an event a duplicate if the user and revenue are equal and the events are less than a minute apart.
 """
-
 def drop_duplicates_in_attributions(df, max_timedelta):
     sorted = df.sort_values(['user_id', 'revenue'])
     
@@ -225,130 +221,10 @@ def drop_duplicates_in_attributions(df, max_timedelta):
     
     return filtered[['user_id', 'revenue_eur', 'ts', 'partner_event', 'ab_test_group']]
 
-"""### Remove users with incorrect groups between marks and attributions stream
-
-Some users have conversion/attribution events with the incorrect group (opposing the mark group). Those users need to be removed from the test as well.
-"""
-
-def load_users(audience, date, marks, chunk_size=10 ** 6):
-    source = 'attributions'
-    now = datetime.now()
-
-    date_str = date.strftime('%Y%m%d')
-    
-    # local cache
-    cache_dir = '{0}/{1}/{2}'.format(cache_folder, audience, source)
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    
-    filename = '{0}/{1}/{2}.csv.gz'.format(path(audience), source, date_str)
-
-
-    fs = s3fs.S3FileSystem(anon=False)
-    fs.connect_timeout = 10  # defaults to 5
-    fs.read_timeout = 30  # defaults to 15 
-    
-    
-    # s3 cache (useful if we don't have enough space on the Colab instance)
-    s3_cache_filename = '{0}/{1}/{2}/{3}.users.parquet'.format(path(audience),
-                                                           source, cache_folder, date_str)
-
-
-    cache_filename = '{0}/{1}.users.parquet'.format(cache_dir, date_str)
-    
-    if os.path.exists(cache_filename):
-        print(now, '[users] loading from', cache_filename)
-        df = from_parquet(cache_filename)
-        df['user_id'] = df['user_id'].astype('int64')
-        df['valid'] = df['valid'].astype('bool')
-        return df
-        
-
-    fs = s3fs.S3FileSystem(anon=False)
-    fs.connect_timeout = 10  # defaults to 5
-    fs.read_timeout = 30  # defaults to 15 
-
-    if fs.exists(path=s3_cache_filename):
-        print(now, '[users] loading from S3 cache', s3_cache_filename)
-        
-        # Download the file to local cache first to avoid timeouts during the load.
-        # This way, if they happen, restart will be using local copies first.
-        fs.get(s3_cache_filename, cache_filename)
-        
-        print(now, '[users] stored S3 cache file to local drive, loading', cache_filename)
-        
-        return from_parquet(cache_filename)
-
-
-    print(now, '[users] start loading CSV for', audience, source, date)
-
-    read_csv_kwargs = {'chunksize': chunk_size}
-    read_csv_kwargs['usecols'] = ['ts', 'user_id', 'ab_test_group']
-
-    df = pd.DataFrame(columns=['user_id','valid'])
-   
-    if not fs.exists(path=filename):
-       print(now, 'WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
-       return df
-      
-    for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False,
-                             **read_csv_kwargs):
-        # remove all events that do not have a group
-        chunk = chunk[chunk['ab_test_group'].isin(['test','control'])]
-        chunk = improve_types(chunk)
-        merged_df = merge(marks, chunk)
-        invalid = merged_df[merged_df.ab_test_group_x != merged_df.ab_test_group_y]
-
-        invalid = invalid[['user_id']].copy()
-        invalid['valid'] = False
-        
-        
-        df = pd.concat([invalid,df],
-                       ignore_index=True,
-                       verify_integrity=True)
-        
-        valid = chunk[['user_id']].copy()
-        valid['valid'] = True
-
-        df = pd.concat([df,valid], ignore_index=True, verify_integrity=True)
-        
-        df = df.drop_duplicates(['user_id'])
-       
-        
-    print(datetime.now(), '[users] finished loading CSV for', date.strftime('%d.%m.%Y'),
-          'took', datetime.now() - now)
-    
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-
-    to_parquet(df, cache_filename)
-
-    # write it to the S3 cache folder as well
-    print(datetime.now(), '[users] caching as parquet', s3_cache_filename)
-
-    to_parquet(df, s3_cache_filename)
-    
-    return df
-
 """## Uplift Calculation
 We calculate the incremental revenue and the iROAS in line with the [remerge whitepaper](https://drive.google.com/file/d/1PTJ93Cpjw1BeiVns8dTcs2zDDWmmjpdc/view). Afterwards we run a [chi squared test](https://en.wikipedia.org/wiki/Chi-squared_test) on the results to test for significance of the results, comparing conversion to per group uniques.
 """
-def uplift(bids_df, attributions_df, index_name, m_hypothesis=1, invalid_users=None, test_inactivity_bias=None, control_inactivity_bias=None):
-    # CORRECTION: remove invalid users if any
-    test_invalid_users = 0
-    control_invalid_users = 0
-    if invalid_users is not None:
-        #memorize how many invalid users we are removing per group
-        invalid_bids_index = bids_df['user_id'].isin(invalid_users)
-        invalid_bids = bids_df[invalid_bids_index]      
-        test_invalid_users = invalid_bids[invalid_bids['ab_test_group'] == TEST]['user_id'].nunique()
-        control_invalid_users = invalid_bids[invalid_bids['ab_test_group'] == CONTROL]['user_id'].nunique()
-
-        # remove invalid users from the main dfs
-        bids_df = bids_df[~invalid_bids_index]      
-        attributions_df = attributions_df[~attributions_df['user_id'].isin(invalid_users)]
-
-    
+def uplift(bids_df, attributions_df, index_name, use_converters_for_significance, m_hypothesis=1):
     # filter for mark events
     marks_df = marked(bids_df)
         
@@ -362,18 +238,6 @@ def uplift(bids_df, attributions_df, index_name, m_hypothesis=1, invalid_users=N
     if control_group_size == 0:
         print("WARNING: No users marked as control for ", index_name, 'skipping.. ')
         return None
-
-    # CORRECTION: compensate for inactivity bias since there are some unobserved invalid users
-    # reasoning: we can observed the invalid users only when they have any attribution activity
-    # hence we must compensate for invalid users which were inactive (=not seen in attribution stream)
-    if invalid_users is not None:
-        if test_inactivity_bias is not None:
-            test_missing_invalid_correction = 1 / (1 - test_inactivity_bias) - 1
-            test_group_size -= test_invalid_users * test_missing_invalid_correction
-        if control_inactivity_bias is not None:
-            control_missing_invalid_correction = 1 / (1 - control_inactivity_bias) - 1
-            control_group_size -= control_invalid_users * control_missing_invalid_correction
-    
 
     # Dask based join, for later and bigger datasets
     # marks_df = dd.from_pandas(marks_df, npartitions=10, sort=True)    
@@ -470,12 +334,10 @@ def uplift(bids_df, attributions_df, index_name, m_hypothesis=1, invalid_users=N
         "ad spend": ad_spend,
         "total revenue": test_revenue + control_revenue,
         "test group size": test_group_size,
-        'test invalid users': test_invalid_users,
         "test conversions": test_conversions,
         "test converters": test_converters,
         "test revenue": test_revenue,
         "control group size": control_group_size,
-        'control invalid users': control_invalid_users,
         "control conversions": control_conversions,
         "control_converters": control_converters,
         "control revenue": control_revenue,
@@ -508,20 +370,20 @@ def uplift(bids_df, attributions_df, index_name, m_hypothesis=1, invalid_users=N
 This takes the whole data set and calculates uplift KPIs.
 """
 
-def uplift_report(bids_df, attributions_df, groups, per_campaign_results, invalid_users=None, test_inactivity_bias=None, control_inactivity_bias=None):
+def uplift_report(bids_df, attributions_df, groups, per_campaign_results, use_converters_for_significance):
     # calculate the total result:
-    report_df = uplift(bids_df, attributions_df, "total",1, invalid_users, test_inactivity_bias, control_inactivity_bias)
+    report_df = uplift(bids_df, attributions_df, "total", use_converters_for_significance)
 
     # if there are groups filter the events against the per campaign groups and generate report
-    if len(groups) > 0:
+    if report_df is not None and len(groups) > 0:
         for name, campaigns in groups.items():
             group_bids_df = bids_df[bids_df.campaign_id.isin(campaigns)]
-            report_df[name] = uplift(group_bids_df, attributions_df, name, len(groups), invalid_users, test_inactivity_bias, control_inactivity_bias)
+            report_df[name] = uplift(group_bids_df, attributions_df, name, use_converters_for_significance, len(groups))
             
-    if per_campaign_results:
+    if report_df is not None and per_campaign_results:
         campaigns = bids_df['campaign_name'].unique()
         for campaign in campaigns:
             name = "c_{0}".format(campaign)
             campaign_bids_df = bids_df[bids_df.campaign_name == campaign]
-            report_df[name] = uplift(campaign_bids_df, attributions_df, name, len(campaigns), invalid_users, test_inactivity_bias, control_inactivity_bias)
+            report_df[name] = uplift(campaign_bids_df, attributions_df, name, use_converters_for_significance, len(campaigns))
     return report_df
