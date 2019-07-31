@@ -6,12 +6,9 @@ import scipy
 import scipy.stats
 import s3fs
 
-VERSION = '5.4.13'
-cache_folder = "cache-v{0}".format(VERSION)
+from const import __version__, TEST, CONTROL
 
-# constants for groups
-TEST = True
-CONTROL = False
+cache_folder = "cache-v{0}".format(__version__)
 
 
 def improve_types(df):
