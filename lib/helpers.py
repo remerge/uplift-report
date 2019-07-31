@@ -6,7 +6,7 @@ import scipy
 import scipy.stats
 import s3fs
 
-from const import __version__, TEST, CONTROL
+from lib.const import __version__, TEST, CONTROL
 
 cache_folder = "cache-v{0}".format(__version__)
 
