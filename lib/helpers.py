@@ -412,8 +412,15 @@ def export_csv(df, file_name):
     try:
         import google.colab
 
-        print('Donwloading...')
+        print('The download of the results file should start automatically. In case it didn\'t happen:')
         google.colab.files.download(file_name)
-    except:
+    except ImportError:
         # We are not in the collab, no need to run the download
+        pass
+
+    try:
+        from IPython.display import FileLink
+
+        FileLink('Click this link to download the results file - %s' % file_name)
+    except ImportError:
         pass
