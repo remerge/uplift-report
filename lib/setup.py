@@ -1,13 +1,13 @@
 from setuptools import setup, find_packages
 from distutils.util import convert_path
 
-main_ns = {}
-ver_path = convert_path('lib/const.py')
-with open(ver_path) as ver_file:
-    exec(ver_file.read(), main_ns)
+main_namespace = {}
+version_file_path = convert_path('const.py')
+with open(version_file_path) as version_file:
+    exec(version_file.read(), main_namespace)
 
 setup(name='uplift_report_lib',
-      version=main_ns['__version__'],
+      version=main_namespace['__version__'],
       description='A set of helper functions for Uplift report',
       url='https://github.com/remerge/uplift-report',
       author='Remerge Tech',
