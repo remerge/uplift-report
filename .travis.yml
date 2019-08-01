@@ -1,0 +1,23 @@
+sudo: false
+language: python
+python:
+  - 2.7
+  - 3.5
+  - 3.6
+
+branches:
+  only:
+    - master
+
+before_install:
+  - 'cd lib'
+  - 'pip install -U pip'
+  - 'pip install -e .[dev]'
+
+script:
+  - 'python -m flake8 lib/'
+
+notifications:
+  email: false
+  slack:
+    secure: A/BZm/7ISFDUQi+IDYtmph8Jd7Un7Gpbl1N/L7J53dpvwirHEcoir4a105fgDAVw21JQ8YFQNZTtwR42YGKd1uUs3F+u5PwXk5e3FmU2yCfAhT7Fc7G7rlR4TzsF8llltKUqxv34yBU3P6pmosomMkyyV1ohbAqB10uctxqa02w=
