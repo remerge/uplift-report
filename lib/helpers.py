@@ -395,10 +395,10 @@ def uplift_report(bids_df, attributions_df, groups, per_campaign_results, use_co
             report_df[name] = uplift(group_bids_df, attributions_df, name, use_converters_for_significance, len(groups))
 
     if report_df is not None and per_campaign_results:
-        campaigns = bids_df['campaign_name'].unique()
+        campaigns = bids_df['campaign_id'].unique()
         for campaign in campaigns:
             name = "c_{0}".format(campaign)
-            campaign_bids_df = bids_df[bids_df.campaign_name == campaign]
+            campaign_bids_df = bids_df[bids_df.campaign_id == campaign]
             report_df[name] = uplift(campaign_bids_df, attributions_df, name, use_converters_for_significance,
                                      len(campaigns))
     return report_df
