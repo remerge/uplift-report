@@ -214,17 +214,17 @@ def drop_duplicates_in_attributions(df, max_timedelta):
     Therefore we rely on a heuristic. We consider an event a duplicate if the user and revenue are equal and the events
     are less than a minute apart.
     """
-    sorted = df.sort_values(['user_id', 'revenue'])
+    sorted = df.sort_values(['user_id', 'revenue_eur'])
 
     # Get values of the previous row
     sorted['last_ts'] = sorted['ts'].shift(1)
     sorted['last_user_id'] = sorted['user_id'].shift(1)
-    sorted['last_revenue'] = sorted['revenue'].shift(1)
+    sorted['last_revenue'] = sorted['revenue_eur'].shift(1)
 
-    # Remove rows if the previous row has the same revenue and user id and the ts are less than max_timedelta apart
+    # Remove rows if the previous row has the same revenue_eur and user id and the ts are less than max_timedelta apart
     filtered = sorted[
         (sorted['user_id'] != sorted['last_user_id']) |
-        (sorted['revenue'] != sorted['last_revenue']) |
+        (sorted['revenue_eur'] != sorted['last_revenue']) |
         ((pd.to_datetime(sorted['ts']) - pd.to_datetime(sorted['last_ts'])) > max_timedelta)]
 
     return filtered[['user_id', 'revenue_eur', 'ts', 'partner_event', 'ab_test_group']]
