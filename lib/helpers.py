@@ -417,3 +417,24 @@ def export_csv(df, file_name):
     except ImportError:
         # We are not in the collab, no need to run the download
         pass
+
+def overview_row(customer, audiences, dates, total):
+    return list([
+        customer,
+        ",".join(audiences),
+        dates[0].strftime('%Y-%m-%d'),
+        dates[-1].strftime('%Y-%m-%d'),
+        helpers.__version__,
+    ]) + list(total.values)
+
+def export_to_overview(customer, audiences, dates, report):
+    !pip install --upgrade --quiet gspread
+    from google.colab import auth
+    auth.authenticate_user()
+
+    import gspread
+    from oauth2client.client import GoogleCredentials
+    gc = gspread.authorize(GoogleCredentials.get_application_default())
+    worksheet = gc.open('Uplift Report Overview').sheet1
+    row = overview_row(customer, audiences, dates, report['total'])
+    worksheet.append_row(row)
