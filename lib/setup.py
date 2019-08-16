@@ -23,6 +23,7 @@ setup(name='uplift_report_lib',
           's3fs==0.3.0',
           'pyarrow==0.14.0',
           'partd==1.0.0',
+          'gspread=3.0.1`,
       ],
       extras_require={
           'dev': [
