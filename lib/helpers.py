@@ -5,6 +5,9 @@ import os
 import scipy
 import scipy.stats
 import s3fs
+from google.colab import auth
+import gspread
+from oauth2client.client import GoogleCredentials
 
 from lib.const import __version__, TEST, CONTROL
 
@@ -428,12 +431,7 @@ def overview_row(customer, audiences, dates, total):
     ]) + list(total.values)
 
 def export_to_overview(customer, audiences, dates, report):
-    !pip install --upgrade --quiet gspread
-    from google.colab import auth
     auth.authenticate_user()
-
-    import gspread
-    from oauth2client.client import GoogleCredentials
     gc = gspread.authorize(GoogleCredentials.get_application_default())
     worksheet = gc.open('Uplift Report Overview').sheet1
     row = overview_row(customer, audiences, dates, report['total'])
