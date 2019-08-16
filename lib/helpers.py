@@ -427,7 +427,7 @@ def overview_row(customer, audiences, dates, total):
         ",".join(audiences),
         dates[0].strftime('%Y-%m-%d'),
         dates[-1].strftime('%Y-%m-%d'),
-        helpers.__version__,
+        __version__,
     ]) + list(total.values)
 
 def export_to_overview(customer, audiences, dates, report):
