@@ -10,20 +10,27 @@ from lib.const import __version__, TEST, CONTROL
 
 cache_folder = "cache-v{0}".format(__version__)
 
+# columns to load from CSV
+bid_columns = ['ts', 'user_id', 'ab_test_group', 'campaign_id','cost_eur','event_type']
+attribution_columns = ['ts', 'user_id', 'partner_event', 'revenue_eur']  
 
-def improve_types(df):
-    """
-    Use more memory efficient types for ts,user_id and ab_test_group
-    """
-    df['ts'] = pd.to_datetime(df['ts'])
-    df['ts'] = (df['ts'].astype('int64') / 1e9).astype('int32')
-    df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
-    df['ab_test_group'] = df['ab_test_group'].transform(lambda g: g == 'test')
+
+def load_marks_and_spend_data(customer, audiences, dates):
+    df = pd.concat([read_csv(customer, audience, 'marks_and_spend', date, columns=bid_columns) for audience in audiences for date in dates],
+                    ignore_index=True, verify_integrity=True)
     return df
 
+def load_attribution_data(customer, audiences, dates, marks_and_spend_df, use_deduplication):
+    marked_user_ids = marked(marks_and_spend_df)['user_id']
+    df = pd.concat(
+    [filter_by_user_ids(read_csv(customer, audience, 'attributions', date, attribution_columns, revenue_event, extract_revenue_events), marked_user_ids) for audience in audiences for date in dates],
+    ignore_index=True, verify_integrity=True)
 
-def path(customer, audience):
-    return "s3://remerge-customers/{0}/uplift_data/{1}".format(customer, audience)
+    # AppsFlyer sends some events twice - we want to remove the duplicates before the analysis
+    if use_deduplication:
+        df = drop_duplicates_in_attributions(df, pd.Timedelta('1 minute'))
+    
+    return df
 
 
 def extract_revenue_events(df, revenue_event):
@@ -32,6 +39,26 @@ def extract_revenue_events(df, revenue_event):
     """
     df = df[df.partner_event == revenue_event]
     return df.drop(columns=['partner_event'])
+
+
+def filter_by_user_ids(df, user_ids):
+    return df[df['user_id'].isin(user_ids)]
+
+
+def improve_types(df):
+    """
+    Use more memory efficient types for ts,user_id and ab_test_group
+    """
+    df['ts'] = pd.to_datetime(df['ts'])
+    df['ts'] = (df['ts'].astype('int64') / 1e9).astype('int32')
+    df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
+    if 'ab_test_group' in df.columns:
+        df['ab_test_group'] = df['ab_test_group'].transform(lambda g: g == 'test')
+    return df
+
+
+def path(customer, audience):
+    return "s3://remerge-customers/{0}/uplift_data/{1}".format(customer, audience)
 
 
 def to_parquet(df, filename):
@@ -141,8 +168,6 @@ def read_csv(customer, audience, source, date, columns=None, revenue_event=None,
         else:
             filtered_chunk = chunk
 
-        # we are not interessted in events that do not have a group
-        filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
         # remove events without a user id
         filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == 36]
 
@@ -230,7 +255,7 @@ def drop_duplicates_in_attributions(df, max_timedelta):
     return filtered[['ts', 'user_id', 'revenue_eur', 'ab_test_group']]
 
 
-def uplift(bids_df, attributions_df, index_name, use_converters_for_significance, m_hypothesis=1):
+def uplift(marks_and_spend_df, attributions_df, index_name, use_converters_for_significance, m_hypothesis=1):
     """
     # Uplift Calculation
 
@@ -240,7 +265,7 @@ def uplift(bids_df, attributions_df, index_name, use_converters_for_significance
     results, comparing conversion to per group uniques.
     """
     # filter for mark events
-    marks_df = marked(bids_df)
+    marks_df = marked(marks_and_spend_df)
 
     # calculate group sizes
     test_group_size = marks_df[marks_df['ab_test_group'] == TEST]['user_id'].nunique()
@@ -253,16 +278,9 @@ def uplift(bids_df, attributions_df, index_name, use_converters_for_significance
         print("WARNING: No users marked as control for ", index_name, 'skipping.. ')
         return None
 
-    # Dask based join, for later and bigger datasets
-    # marks_df = dd.from_pandas(marks_df, npartitions=10, sort=True)    
-    # attributions_df = dd.from_pandas(attributions_df, npartitions=20, sort=True)
-    # merged_df = dd.merge(attributions_df, marks_df, on='user_id')
-    # merged_df = merged_df[merged_df.ts_x > merged_df.ts_y]
-    # merged_df = merged_df.compute()
-
     # join marks and revenue events    
     merged_df = merge(marks_df, attributions_df)
-    grouped_revenue = merged_df.groupby(by='ab_test_group_y')
+    grouped_revenue = merged_df.groupby(by='ab_test_group')
 
     # init all KPIs with 0s first:
     test_revenue_micros = 0
@@ -303,7 +321,7 @@ def uplift(bids_df, attributions_df, index_name, use_converters_for_significance
     incremental_converters = test_converters - control_converters * ratio
 
     # calculate the ad spend        
-    ad_spend = calculate_ad_spend(bids_df)
+    ad_spend = calculate_ad_spend(marks_and_spend_df)
 
     iroas = incremental_revenue / ad_spend
     icpa = ad_spend / incremental_conversions
@@ -380,26 +398,26 @@ def uplift(bids_df, attributions_df, index_name, use_converters_for_significance
     ).transpose()
 
 
-def uplift_report(bids_df, attributions_df, groups, per_campaign_results, use_converters_for_significance):
+def uplift_report(marks_and_spend_df, attributions_df, groups, per_campaign_results, use_converters_for_significance):
     """
     Calculate and display uplift report for the data set as a whole
     This takes the whole data set and calculates uplift KPIs.
     """
     # calculate the total result:
-    report_df = uplift(bids_df, attributions_df, "total", use_converters_for_significance)
+    report_df = uplift(marks_and_spend_df, attributions_df, "total", use_converters_for_significance)
 
     # if there are groups filter the events against the per campaign groups and generate report
     if report_df is not None and len(groups) > 0:
         for name, campaigns in groups.items():
-            group_bids_df = bids_df[bids_df.campaign_id.isin(campaigns)]
-            report_df[name] = uplift(group_bids_df, attributions_df, name, use_converters_for_significance, len(groups))
+            group_df = marks_and_spend_df[marks_and_spend_df.campaign_id.isin(campaigns)]
+            report_df[name] = uplift(group_df, attributions_df, name, use_converters_for_significance, len(groups))
 
     if report_df is not None and per_campaign_results:
-        campaigns = bids_df['campaign_id'].unique()
+        campaigns = marks_and_spend_df['campaign_id'].unique()
         for campaign in campaigns:
             name = "c_{0}".format(campaign)
-            campaign_bids_df = bids_df[bids_df.campaign_id == campaign]
-            report_df[name] = uplift(campaign_bids_df, attributions_df, name, use_converters_for_significance,
+            campaign_df = marks_and_spend_df[marks_and_spend_df.campaign_id == campaign]
+            report_df[name] = uplift(campaign_df, attributions_df, name, use_converters_for_significance,
                                      len(campaigns))
     return report_df
 
