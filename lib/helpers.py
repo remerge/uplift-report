@@ -20,7 +20,7 @@ def load_marks_and_spend_data(customer, audiences, dates):
                     ignore_index=True, verify_integrity=True)
     return df
 
-def load_attribution_data(customer, audiences, dates, marks_and_spend_df, use_deduplication):
+def load_attribution_data(customer, audiences, dates, revenue_event, marks_and_spend_df, use_deduplication):
     marked_user_ids = marked(marks_and_spend_df)['user_id']
     df = pd.concat(
     [filter_by_user_ids(read_csv(customer, audience, 'attributions', date, attribution_columns, revenue_event, extract_revenue_events), marked_user_ids) for audience in audiences for date in dates],
