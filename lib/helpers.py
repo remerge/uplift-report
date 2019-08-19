@@ -433,6 +433,6 @@ def overview_row(customer, audiences, dates, total):
 def export_to_overview(customer, audiences, dates, report):
     auth.authenticate_user()
     gc = gspread.authorize(GoogleCredentials.get_application_default())
-    worksheet = gc.open('Uplift Report Overview').sheet1
+    worksheet = gc.open_by_url('https://docs.google.com/spreadsheets/d/1je3b1g6Yg2B-bmwx6CP5akcrsj9DzQcs9PnKHoKoioQ/edit').sheet1
     row = overview_row(customer, audiences, dates, report['total'])
     worksheet.append_row(row)
