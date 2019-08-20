@@ -255,7 +255,7 @@ def drop_duplicates_in_attributions(df, max_timedelta):
         (sorted['revenue_eur'] != sorted['last_revenue']) |
         ((pd.to_datetime(sorted['ts']) - pd.to_datetime(sorted['last_ts'])) > max_timedelta)]
 
-    return filtered[['ts', 'user_id', 'revenue_eur', 'ab_test_group']]
+    return filtered[['ts', 'user_id', 'revenue_eur']]
 
 
 def uplift(marks_and_spend_df, attributions_df, index_name, use_converters_for_significance, m_hypothesis=1):
