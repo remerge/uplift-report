@@ -45,7 +45,10 @@ def extract_revenue_events(df, revenue_event):
 
 
 def filter_by_user_ids(df, user_ids):
-    return df[df['user_id'].isin(user_ids)]
+    if 'user_id' in df.columns:
+        return df[df['user_id'].isin(user_ids)]
+    else:
+        return df
 
 
 def improve_types(df):
