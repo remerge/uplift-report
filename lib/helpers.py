@@ -6,30 +6,35 @@ import scipy
 import scipy.stats
 import s3fs
 
-from lib.const import __version__, TEST, CONTROL
+from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS
 
 cache_folder = "cache-v{0}".format(__version__)
 
 # columns to load from CSV
-bid_columns = ['ts', 'user_id', 'ab_test_group', 'campaign_id','cost_eur','event_type']
-attribution_columns = ['ts', 'user_id', 'partner_event', 'revenue_eur']  
+bid_columns = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur', 'event_type']
+attribution_columns = ['ts', 'user_id', 'partner_event', 'revenue_eur']
 
 
 def load_marks_and_spend_data(customer, audiences, dates):
-    df = pd.concat([read_csv(customer, audience, 'marks_and_spend', date, columns=bid_columns) for audience in audiences for date in dates],
-                    ignore_index=True, verify_integrity=True)
+    df = pd.concat(
+        [read_csv(customer, audience, CSV_SOURCE_MARKS_AND_SPEND, date, columns=bid_columns) for audience in audiences for date
+         in dates],
+        ignore_index=True, verify_integrity=True)
     return df
+
 
 def load_attribution_data(customer, audiences, dates, revenue_event, marks_and_spend_df, use_deduplication):
     marked_user_ids = marked(marks_and_spend_df)['user_id']
     df = pd.concat(
-    [filter_by_user_ids(read_csv(customer, audience, 'attributions', date, attribution_columns, revenue_event, extract_revenue_events), marked_user_ids) for audience in audiences for date in dates],
-    ignore_index=True, verify_integrity=True)
+        [filter_by_user_ids(read_csv(customer, audience, CSV_SOURCE_ATTRIBUTIONS, date, attribution_columns, revenue_event,
+                                     extract_revenue_events), marked_user_ids) for audience in audiences for date in
+         dates],
+        ignore_index=True, verify_integrity=True)
 
     # AppsFlyer sends some events twice - we want to remove the duplicates before the analysis
     if use_deduplication:
         df = drop_duplicates_in_attributions(df, pd.Timedelta('1 minute'))
-    
+
     return df
 
 
@@ -124,7 +129,7 @@ def read_csv(customer, audience, source, date, columns=None, revenue_event=None,
     # s3 cache (useful if we don't have enough space on the Colab instance)
     s3_cache_filename = '{0}/{1}/{2}/{3}.parquet'.format(path(customer, audience), source, cache_folder, date_str)
 
-    if source == 'attributions':
+    if source == CSV_SOURCE_ATTRIBUTIONS:
         cache_filename = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, revenue_event)
 
         # s3 cache (useful if we don't have enough space on the Colab instance)
@@ -167,6 +172,10 @@ def read_csv(customer, audience, source, date, columns=None, revenue_event=None,
             filtered_chunk = chunk_filter_fn(chunk, revenue_event)
         else:
             filtered_chunk = chunk
+
+        if source != CSV_SOURCE_ATTRIBUTIONS:
+            # we are not interested in events that do not have a group amongst non-attribution events
+            filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
 
         # remove events without a user id
         filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == 36]
