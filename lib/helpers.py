@@ -209,6 +209,9 @@ def marked(df):
     marked once for an audience he will have the same group allocation for consecutive marks (different campaigns)
     unless manually reset on audience level.
     """
+    if df.empty:
+        return df
+    
     mark_df = df[df.event_type == 'mark']
 
     # we dont need the event_type anymore (to save memory)
