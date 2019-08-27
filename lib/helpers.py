@@ -12,37 +12,35 @@ cache_folder = "cache-v{0}".format(__version__)
 
 
 class Helpers(object):
+    """
+    A class, wrapping a set of helper functions, providing functionality to calculate uplift report, given the
+    setup arguments
+
+    :param customer: Name of the customer the report is created for
+    :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
+    :param audiences: A list of audiences for which the report is going to be calculated
+    :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
+    :param groups: An optional dictionary of named campaign groups, by which the report should be split. Example:
+            {
+                "All US campaigns": [1234, 3456, 5678],
+                "All EU campaigns": [4312, 5123],
+            }
+    :param per_campaign_results: Split uplift results per campaign
+    :param use_converters_for_significance: Base statistical calculations off of unique converters instead
+        of conversions
+    :param use_deduplication: Enable deduplication heuristic for AppsFlyer
+
+    :type customer: str
+    :type dates: pandas.DatetimeIndex
+    :type audiences: list[str]
+    :type revenue_event: str
+    :type groups: dict[str, list[int]]|None
+    :type per_campaign_results: bool
+    :type use_converters_for_significance: bool
+    :type use_deduplication: bool
+    """
     def __init__(self, customer, dates, audiences, revenue_event, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False):
-        """
-        A class, wrapping a set of helper functions, providing functionality to calculate uplift report, given the
-        setup arguments
-
-        :param customer: Name of the customer the report is created for
-        :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
-        :param audiences: A list of audiences for which the report is going to be calculated
-        :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
-        :param groups: An optional dictionary of named campaign groups, by which the report should be split. Example:
-                {
-                    "All US campaigns": [1234, 3456, 5678],
-                    "All EU campaigns": [4312, 5123],
-                }
-        :param per_campaign_results: Split uplift results per campaign
-        :param use_converters_for_significance: Base statistical calculations off of unique converters instead
-            of conversions
-        :param use_deduplication: Enable deduplication heuristic for AppsFlyer
-
-        :type customer: str
-        :type dates: pandas.DatetimeIndex
-        :type audiences: list[str]
-        :type revenue_event: str
-        :type groups: dict[str, list[int]]|None
-        :type per_campaign_results: bool
-        :type use_converters_for_significance: bool
-        :type use_deduplication: bool
-
-        :return None
-        """
 
         self.customer = customer
 
