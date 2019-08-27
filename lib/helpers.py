@@ -17,9 +17,9 @@ class Helpers(object):
     setup arguments
 
     :param customer: Name of the customer the report is created for
-    :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
     :param audiences: A list of audiences for which the report is going to be calculated
     :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
+    :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
     :param groups: An optional dictionary of named campaign groups, by which the report should be split. Example:
             {
                 "All US campaigns": [1234, 3456, 5678],
@@ -39,7 +39,7 @@ class Helpers(object):
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
     """
-    def __init__(self, customer, dates, audiences, revenue_event, groups=None, per_campaign_results=False,
+    def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False):
 
         self.customer = customer
