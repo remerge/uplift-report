@@ -219,9 +219,9 @@ def marked(df):
 
     sorted_mark_df = mark_df.sort_values('ts')
 
-    depuplicated_mark_df = sorted_mark_df.drop_duplicates(['user_id'])
+    deduplicated_mark_df = sorted_mark_df.drop_duplicates(['user_id'])
 
-    return depuplicated_mark_df
+    return deduplicated_mark_df
 
 
 def merge(mark_df, attributions_df):
