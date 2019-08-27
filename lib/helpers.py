@@ -68,6 +68,10 @@ class Helpers(object):
         )
 
     @staticmethod
+    def version():
+        return __version__
+
+    @staticmethod
     def log(*args):
         """
         Print something in a cleanly formatted fashion, with a timestamp
