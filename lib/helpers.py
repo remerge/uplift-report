@@ -11,192 +11,6 @@ from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CS
 cache_folder = "cache-v{0}".format(__version__)
 
 
-class _CSVHelpers(object):
-    def __init__(self, customer, revenue_event, chunk_size=10 ** 6):
-        """
-        Internal class, containing technical read-write related methods and helpers
-        :param customer: Name of the customer the report is created for
-        :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
-        :param chunk_size: How many lines should be taken for a single chunk during reads
-
-        :type customer: str
-        :type revenue_event: str
-        :type chunk_size: int
-        """
-        self.customer = customer
-
-        self.revenue_event = revenue_event
-
-        self.chunk_size = chunk_size
-
-        # columns to load from CSV
-        self.columns = dict()
-        self.columns[CSV_SOURCE_MARKS_AND_SPEND] = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur',
-                                                    'event_type']
-        self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
-
-    def read_csv(self, audience, source, date, chunk_filter_fn=None):
-        """
-        Helper to download CSV files, convert to DF and print time needed.
-        Caches files locally and on S3 to be reused.
-        """
-        now = datetime.now()
-
-        date_str = date.strftime('%Y%m%d')
-
-        filename = '{0}/{1}/{2}.csv.gz'.format(self._audience_data_path(audience), source, date_str)
-
-        # local cache
-        cache_dir = '{0}/{1}/{2}'.format(cache_folder, audience, source)
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
-
-        cache_file_name = '{0}/{1}.parquet'.format(cache_dir, date_str)
-
-        # s3 cache (useful if we don't have enough space on the Colab instance)
-        s3_cache_file_name = '{0}/{1}/{2}/{3}.parquet'.format(self._audience_data_path(audience), source, cache_folder,
-                                                             date_str)
-
-        if source == CSV_SOURCE_ATTRIBUTIONS:
-            cache_file_name = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, self.revenue_event)
-
-            # s3 cache (useful if we don't have enough space on the Colab instance)
-            s3_cache_file_name = '{0}/{1}/{2}/{3}-{4}.parquet' \
-                .format(self._audience_data_path(audience), source, cache_folder, date_str, self.revenue_event)
-
-        fs = s3fs.S3FileSystem(anon=False)
-        fs.connect_timeout = 10  # defaults to 5
-        fs.read_timeout = 30  # defaults to 15
-
-        columns = self.columns.get(source)
-
-        if os.path.exists(cache_file_name):
-            print(now, 'loading from', cache_file_name)
-            return self._from_parquet_corrected(
-                file_name=cache_file_name,
-                s3_file_name=s3_cache_file_name,
-                fs=fs,
-                columns=columns,
-            )
-
-        if fs.exists(path=s3_cache_file_name):
-            print(now, 'loading from S3 cache', s3_cache_file_name)
-
-            # Download the file to local cache first to avoid timeouts during the load.
-            # This way, if they happen, restart will be using local copies first.
-            fs.get(s3_cache_file_name, cache_file_name)
-
-            print(now, 'stored S3 cache file to local drive, loading', cache_file_name)
-
-            return self._from_parquet_corrected(
-                file_name=cache_file_name,
-                s3_file_name=s3_cache_file_name,
-                fs=fs,
-                columns=columns,
-            )
-
-        print(now, 'start loading CSV for', audience, source, date)
-
-        read_csv_kwargs = {'chunksize': self.chunk_size}
-        if columns:
-            read_csv_kwargs['usecols'] = columns
-
-        df = pd.DataFrame()
-
-        if not fs.exists(path=filename):
-            print(now, 'WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
-            return df
-
-        for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False, **read_csv_kwargs):
-            if chunk_filter_fn:
-                filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
-            else:
-                filtered_chunk = chunk
-
-            if source != CSV_SOURCE_ATTRIBUTIONS:
-                # we are not interested in events that do not have a group amongst non-attribution events
-                filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
-
-            # remove events without a user id
-            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == 36]
-
-            filtered_chunk = self._improve_types(filtered_chunk)
-
-            df = pd.concat([df, filtered_chunk],
-                           ignore_index=True, verify_integrity=True)
-
-        print(datetime.now(), 'finished loading CSV for', date.strftime('%d.%m.%Y'),
-              'took', datetime.now() - now)
-
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
-
-        print(datetime.now(), 'caching local as parquet', cache_file_name)
-        self._to_parquet(df, cache_file_name)
-
-        # write it to the S3 cache folder as well
-        print(datetime.now(), 'caching on S3 as parquet', s3_cache_file_name)
-        self._to_parquet(df, s3_cache_file_name)
-
-        return df
-
-    def _audience_data_path(self, audience):
-        return "s3://remerge-customers/{0}/uplift_data/{1}".format(self.customer, audience)
-
-    @staticmethod
-    def _to_parquet(df, file_name):
-        """
-        parquet save and load helper
-        """
-        df.to_parquet(file_name, engine='pyarrow')
-
-    @staticmethod
-    def _improve_types(df):
-        """
-        Use more memory efficient types for ts,user_id and ab_test_group
-        """
-        df['ts'] = pd.to_datetime(df['ts'])
-        df['ts'] = (df['ts'].astype('int64') / 1e9).astype('int32')
-        df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
-        if 'ab_test_group' in df.columns:
-            df['ab_test_group'] = df['ab_test_group'].transform(lambda g: g == 'test')
-        return df
-
-    @staticmethod
-    def _from_parquet(filename):
-        return pd.read_parquet(filename, engine='pyarrow')
-
-    @staticmethod
-    def _from_parquet_corrected(file_name, s3_file_name, fs, columns):
-        """
-        A little "hack" to convert old file on the fly
-        """
-        df = _CSVHelpers._from_parquet(file_name)
-        update_cache = False
-        if columns:
-            to_drop = list(set(df.columns.values) - set(columns))
-            if to_drop:
-                df = df.drop(columns=to_drop)
-                update_cache = True
-
-        # remove events without a user id
-        if df['user_id'].dtype == 'object':
-            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != 36].empty:
-                df = df[df['user_id'].str.len() == 36]
-                update_cache = True
-
-        if df['user_id'].dtype != 'int64':
-            df = _CSVHelpers._improve_types(df)
-            update_cache = True
-
-        if update_cache:
-            print(datetime.now(), 'rewritting cached file with correct types (local and S3)', file_name, s3_file_name)
-            _CSVHelpers._to_parquet(df=df, file_name=file_name)
-            fs.put(file_name, s3_file_name)
-
-        return df
-
-
 class Helpers(object):
     def __init__(self, customer, dates, audiences, revenue_event, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False):
@@ -604,3 +418,189 @@ class Helpers(object):
         merged_df = pd.merge(attributions_df, marks_df, on='user_id')
 
         return merged_df[merged_df.ts_x > merged_df.ts_y]
+
+
+class _CSVHelpers(object):
+    def __init__(self, customer, revenue_event, chunk_size=10 ** 6):
+        """
+        Internal class, containing technical read-write related methods and helpers
+        :param customer: Name of the customer the report is created for
+        :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
+        :param chunk_size: How many lines should be taken for a single chunk during reads
+
+        :type customer: str
+        :type revenue_event: str
+        :type chunk_size: int
+        """
+        self.customer = customer
+
+        self.revenue_event = revenue_event
+
+        self.chunk_size = chunk_size
+
+        # columns to load from CSV
+        self.columns = dict()
+        self.columns[CSV_SOURCE_MARKS_AND_SPEND] = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur',
+                                                    'event_type']
+        self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
+
+    def read_csv(self, audience, source, date, chunk_filter_fn=None):
+        """
+        Helper to download CSV files, convert to DF and print time needed.
+        Caches files locally and on S3 to be reused.
+        """
+        now = datetime.now()
+
+        date_str = date.strftime('%Y%m%d')
+
+        filename = '{0}/{1}/{2}.csv.gz'.format(self._audience_data_path(audience), source, date_str)
+
+        # local cache
+        cache_dir = '{0}/{1}/{2}'.format(cache_folder, audience, source)
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        cache_file_name = '{0}/{1}.parquet'.format(cache_dir, date_str)
+
+        # s3 cache (useful if we don't have enough space on the Colab instance)
+        s3_cache_file_name = '{0}/{1}/{2}/{3}.parquet'.format(self._audience_data_path(audience), source, cache_folder,
+                                                              date_str)
+
+        if source == CSV_SOURCE_ATTRIBUTIONS:
+            cache_file_name = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, self.revenue_event)
+
+            # s3 cache (useful if we don't have enough space on the Colab instance)
+            s3_cache_file_name = '{0}/{1}/{2}/{3}-{4}.parquet' \
+                .format(self._audience_data_path(audience), source, cache_folder, date_str, self.revenue_event)
+
+        fs = s3fs.S3FileSystem(anon=False)
+        fs.connect_timeout = 10  # defaults to 5
+        fs.read_timeout = 30  # defaults to 15
+
+        columns = self.columns.get(source)
+
+        if os.path.exists(cache_file_name):
+            print(now, 'loading from', cache_file_name)
+            return self._from_parquet_corrected(
+                file_name=cache_file_name,
+                s3_file_name=s3_cache_file_name,
+                fs=fs,
+                columns=columns,
+            )
+
+        if fs.exists(path=s3_cache_file_name):
+            print(now, 'loading from S3 cache', s3_cache_file_name)
+
+            # Download the file to local cache first to avoid timeouts during the load.
+            # This way, if they happen, restart will be using local copies first.
+            fs.get(s3_cache_file_name, cache_file_name)
+
+            print(now, 'stored S3 cache file to local drive, loading', cache_file_name)
+
+            return self._from_parquet_corrected(
+                file_name=cache_file_name,
+                s3_file_name=s3_cache_file_name,
+                fs=fs,
+                columns=columns,
+            )
+
+        print(now, 'start loading CSV for', audience, source, date)
+
+        read_csv_kwargs = {'chunksize': self.chunk_size}
+        if columns:
+            read_csv_kwargs['usecols'] = columns
+
+        df = pd.DataFrame()
+
+        if not fs.exists(path=filename):
+            print(now, 'WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
+            return df
+
+        for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False, **read_csv_kwargs):
+            if chunk_filter_fn:
+                filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
+            else:
+                filtered_chunk = chunk
+
+            if source != CSV_SOURCE_ATTRIBUTIONS:
+                # we are not interested in events that do not have a group amongst non-attribution events
+                filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
+
+            # remove events without a user id
+            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == 36]
+
+            filtered_chunk = self._improve_types(filtered_chunk)
+
+            df = pd.concat([df, filtered_chunk],
+                           ignore_index=True, verify_integrity=True)
+
+        print(datetime.now(), 'finished loading CSV for', date.strftime('%d.%m.%Y'),
+              'took', datetime.now() - now)
+
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        print(datetime.now(), 'caching local as parquet', cache_file_name)
+        self._to_parquet(df, cache_file_name)
+
+        # write it to the S3 cache folder as well
+        print(datetime.now(), 'caching on S3 as parquet', s3_cache_file_name)
+        self._to_parquet(df, s3_cache_file_name)
+
+        return df
+
+    def _audience_data_path(self, audience):
+        return "s3://remerge-customers/{0}/uplift_data/{1}".format(self.customer, audience)
+
+    @staticmethod
+    def _to_parquet(df, file_name):
+        """
+        parquet save and load helper
+        """
+        df.to_parquet(file_name, engine='pyarrow')
+
+    @staticmethod
+    def _improve_types(df):
+        """
+        Use more memory efficient types for ts,user_id and ab_test_group
+        """
+        df['ts'] = pd.to_datetime(df['ts'])
+        df['ts'] = (df['ts'].astype('int64') / 1e9).astype('int32')
+        df['user_id'] = df['user_id'].apply(xxhash.xxh64_intdigest).astype('int64')
+        if 'ab_test_group' in df.columns:
+            df['ab_test_group'] = df['ab_test_group'].transform(lambda g: g == 'test')
+        return df
+
+    @staticmethod
+    def _from_parquet(filename):
+        return pd.read_parquet(filename, engine='pyarrow')
+
+    @staticmethod
+    def _from_parquet_corrected(file_name, s3_file_name, fs, columns):
+        """
+        A little "hack" to convert old file on the fly
+        """
+        df = _CSVHelpers._from_parquet(file_name)
+        update_cache = False
+        if columns:
+            to_drop = list(set(df.columns.values) - set(columns))
+            if to_drop:
+                df = df.drop(columns=to_drop)
+                update_cache = True
+
+        # remove events without a user id
+        if df['user_id'].dtype == 'object':
+            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != 36].empty:
+                df = df[df['user_id'].str.len() == 36]
+                update_cache = True
+
+        if df['user_id'].dtype != 'int64':
+            df = _CSVHelpers._improve_types(df)
+            update_cache = True
+
+        if update_cache:
+            print(datetime.now(), 'rewritting cached file with correct types (local and S3)', file_name, s3_file_name)
+            _CSVHelpers._to_parquet(df=df, file_name=file_name)
+            fs.put(file_name, s3_file_name)
+
+        return df
