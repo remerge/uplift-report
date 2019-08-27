@@ -19,17 +19,16 @@ class Helpers(object):
         setup arguments
 
         :param customer: Name of the customer the report is created for
-        :param dates: Date range, for which the report is generated
-        :param audiences: A list of audiences for which the report is going to be calculated (use pandas.date_range to
-            generate a range)
+        :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
+        :param audiences: A list of audiences for which the report is going to be calculated
         :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
-        :param groups: A dictionary of named campaign groups, by which the report would be split. Example:
+        :param groups: An optional dictionary of named campaign groups, by which the report should be split. Example:
                 {
                     "All US campaigns": [1234, 3456, 5678],
                     "All EU campaigns": [4312, 5123],
                 }
-        :param per_campaign_results: Whether to calculate uplift results per campaign
-        :param use_converters_for_significance: Base statistical calculations off  unique converters instead
+        :param per_campaign_results: Split uplift results per campaign
+        :param use_converters_for_significance: Base statistical calculations off of unique converters instead
             of conversions
         :param use_deduplication: Enable deduplication heuristic for AppsFlyer
 
