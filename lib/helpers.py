@@ -51,17 +51,17 @@ class _CSVHelpers(object):
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
 
-        cache_filename = '{0}/{1}.parquet'.format(cache_dir, date_str)
+        cache_file_name = '{0}/{1}.parquet'.format(cache_dir, date_str)
 
         # s3 cache (useful if we don't have enough space on the Colab instance)
-        s3_cache_filename = '{0}/{1}/{2}/{3}.parquet'.format(self._audience_data_path(audience), source, cache_folder,
+        s3_cache_file_name = '{0}/{1}/{2}/{3}.parquet'.format(self._audience_data_path(audience), source, cache_folder,
                                                              date_str)
 
         if source == CSV_SOURCE_ATTRIBUTIONS:
-            cache_filename = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, self.revenue_event)
+            cache_file_name = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, self.revenue_event)
 
             # s3 cache (useful if we don't have enough space on the Colab instance)
-            s3_cache_filename = '{0}/{1}/{2}/{3}-{4}.parquet' \
+            s3_cache_file_name = '{0}/{1}/{2}/{3}-{4}.parquet' \
                 .format(self._audience_data_path(audience), source, cache_folder, date_str, self.revenue_event)
 
         fs = s3fs.S3FileSystem(anon=False)
@@ -70,20 +70,30 @@ class _CSVHelpers(object):
 
         columns = self.columns.get(source)
 
-        if os.path.exists(cache_filename):
-            print(now, 'loading from', cache_filename)
-            return self._from_parquet_corrected(cache_filename, s3_cache_filename, fs, columns)
+        if os.path.exists(cache_file_name):
+            print(now, 'loading from', cache_file_name)
+            return self._from_parquet_corrected(
+                file_name=cache_file_name,
+                s3_file_name=s3_cache_file_name,
+                fs=fs,
+                columns=columns,
+            )
 
-        if fs.exists(path=s3_cache_filename):
-            print(now, 'loading from S3 cache', s3_cache_filename)
+        if fs.exists(path=s3_cache_file_name):
+            print(now, 'loading from S3 cache', s3_cache_file_name)
 
             # Download the file to local cache first to avoid timeouts during the load.
             # This way, if they happen, restart will be using local copies first.
-            fs.get(s3_cache_filename, cache_filename)
+            fs.get(s3_cache_file_name, cache_file_name)
 
-            print(now, 'stored S3 cache file to local drive, loading', cache_filename)
+            print(now, 'stored S3 cache file to local drive, loading', cache_file_name)
 
-            return self._from_parquet_corrected(cache_filename, s3_cache_filename, fs, columns)
+            return self._from_parquet_corrected(
+                file_name=cache_file_name,
+                s3_file_name=s3_cache_file_name,
+                fs=fs,
+                columns=columns,
+            )
 
         print(now, 'start loading CSV for', audience, source, date)
 
@@ -121,12 +131,12 @@ class _CSVHelpers(object):
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
 
-        print(datetime.now(), 'caching local as parquet', cache_filename)
-        self._to_parquet(df, cache_filename)
+        print(datetime.now(), 'caching local as parquet', cache_file_name)
+        self._to_parquet(df, cache_file_name)
 
         # write it to the S3 cache folder as well
-        print(datetime.now(), 'caching on S3 as parquet', s3_cache_filename)
-        self._to_parquet(df, s3_cache_filename)
+        print(datetime.now(), 'caching on S3 as parquet', s3_cache_file_name)
+        self._to_parquet(df, s3_cache_file_name)
 
         return df
 
@@ -134,11 +144,11 @@ class _CSVHelpers(object):
         return "s3://remerge-customers/{0}/uplift_data/{1}".format(self.customer, audience)
 
     @staticmethod
-    def _to_parquet(df, filename):
+    def _to_parquet(df, file_name):
         """
         parquet save and load helper
         """
-        df.to_parquet(filename, engine='pyarrow')
+        df.to_parquet(file_name, engine='pyarrow')
 
     @staticmethod
     def _improve_types(df):
@@ -157,11 +167,11 @@ class _CSVHelpers(object):
         return pd.read_parquet(filename, engine='pyarrow')
 
     @staticmethod
-    def _from_parquet_corrected(filename, s3_filename, fs, columns):
+    def _from_parquet_corrected(file_name, s3_file_name, fs, columns):
         """
         A little "hack" to convert old file on the fly
         """
-        df = _CSVHelpers._from_parquet(filename)
+        df = _CSVHelpers._from_parquet(file_name)
         update_cache = False
         if columns:
             to_drop = list(set(df.columns.values) - set(columns))
@@ -180,9 +190,9 @@ class _CSVHelpers(object):
             update_cache = True
 
         if update_cache:
-            print(datetime.now(), 'rewritting cached file with correct types (local and S3)', filename, s3_filename)
-            _CSVHelpers._to_parquet(df, filename)
-            fs.put(filename, s3_filename)
+            print(datetime.now(), 'rewritting cached file with correct types (local and S3)', file_name, s3_file_name)
+            _CSVHelpers._to_parquet(df=df, file_name=file_name)
+            fs.put(file_name, s3_file_name)
 
         return df
 
@@ -261,8 +271,14 @@ class Helpers(object):
         :rtype: pandas.DataFrame
         """
         df = pd.concat(
-            [self._csv_helpers.read_csv(audience, CSV_SOURCE_MARKS_AND_SPEND, date) for audience in self.audiences for
-             date in self.dates], ignore_index=True, verify_integrity=True)
+            [self._csv_helpers.read_csv(
+                audience=audience,
+                source=CSV_SOURCE_MARKS_AND_SPEND,
+                date=date,
+            ) for audience in self.audiences for date in self.dates],
+            ignore_index=True,
+            verify_integrity=True,
+        )
         return df
 
     def load_attribution_data(self, marks_and_spend_df):
@@ -280,13 +296,21 @@ class Helpers(object):
         marked_user_ids = self._marked(marks_and_spend_df)['user_id']
         df = pd.concat(
             [self._filter_by_user_ids(
-                self._csv_helpers.read_csv(audience, CSV_SOURCE_ATTRIBUTIONS, date, self._extract_revenue_events),
-                marked_user_ids,
-            ) for audience in self.audiences for date in self.dates], ignore_index=True, verify_integrity=True)
+                df=self._csv_helpers.read_csv(
+                    audience=audience,
+                    source=CSV_SOURCE_ATTRIBUTIONS,
+                    date=date,
+                    chunk_filter_fn=self._extract_revenue_events,
+                ),
+                user_ids=marked_user_ids,
+            ) for audience in self.audiences for date in self.dates],
+            ignore_index=True,
+            verify_integrity=True,
+        )
 
         # AppsFlyer sends some events twice - we want to remove the duplicates before the analysis
         if self.use_deduplication:
-            df = self._drop_duplicates_in_attributions(df, pd.Timedelta('1 minute'))
+            df = self._drop_duplicates_in_attributions(df=df, max_timedelta=pd.Timedelta('1 minute'))
 
         return df
 
@@ -430,7 +454,7 @@ class Helpers(object):
             return None
 
         # join marks and revenue events
-        merged_df = self._merge(marks_df, attributions_df)
+        merged_df = self._merge(mark_df=marks_df, attributions_df=attributions_df)
         grouped_revenue = merged_df.groupby(by='ab_test_group')
 
         # init all KPIs with 0s first:
@@ -572,11 +596,11 @@ class Helpers(object):
         return ad_spend_micros / 10 ** 6
 
     @staticmethod
-    def _merge(mark_df, attributions_df):
+    def _merge(marks_df, attributions_df):
         """
         `merge` joins the marked users with the revenue events and excludes any revenue event that happened before the
         user was marked.
         """
-        merged_df = pd.merge(attributions_df, mark_df, on='user_id')
+        merged_df = pd.merge(attributions_df, marks_df, on='user_id')
 
         return merged_df[merged_df.ts_x > merged_df.ts_y]
