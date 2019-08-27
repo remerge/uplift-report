@@ -269,7 +269,7 @@ class Helpers(object):
             return None
 
         # join marks and revenue events
-        merged_df = self._merge(mark_df=marks_df, attributions_df=attributions_df)
+        merged_df = self._merge(marks_df=marks_df, attributions_df=attributions_df)
         grouped_revenue = merged_df.groupby(by='ab_test_group')
 
         # init all KPIs with 0s first:
