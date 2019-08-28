@@ -12,6 +12,16 @@ from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CS
 cache_folder = "cache-v{0}".format(__version__)
 
 
+def log(*args):
+    """
+    Print something in a cleanly formatted fashion, with a timestamp
+    :param args: A list of arguments to print. Internally, they will be passed to built-in print function
+
+    :return None
+    """
+    print('[%s]:' % datetime.now(), *args)
+
+
 class Helpers(object):
     """
     A class, wrapping a set of helper functions, providing functionality to calculate uplift report, given the
@@ -68,16 +78,6 @@ class Helpers(object):
     @staticmethod
     def version():
         return __version__
-
-    @staticmethod
-    def log(*args):
-        """
-        Print something in a cleanly formatted fashion, with a timestamp
-        :param args: A list of arguments to print. Internally, they will be passed to built-in print function
-
-        :return None
-        """
-        print('[%s]:' % datetime.now(), *args)
 
     def load_marks_and_spend_data(self):
         """
@@ -191,12 +191,12 @@ class Helpers(object):
         """
         df.to_csv(file_name)
 
-        print('Stored results as a local CSV file: %s' % file_name)
+        log('Stored results as a local CSV file', file_name)
 
         try:
             import google.colab
 
-            print('The download of the results file should start automatically')
+            log('The download of the results file should start automatically')
             google.colab.files.download(file_name)
         except ImportError:
             # We are not in the colab, no need to run the download
@@ -261,12 +261,12 @@ class Helpers(object):
         # calculate group sizes
         test_group_size = marks_df[marks_df['ab_test_group'] == TEST]['user_id'].nunique()
         if test_group_size == 0:
-            print("WARNING: No users marked as test for ", index_name, 'skipping.. ')
+            log("WARNING: No users marked as test for ", index_name, 'skipping.. ')
             return None
 
         control_group_size = marks_df[marks_df['ab_test_group'] == CONTROL]['user_id'].nunique()
         if control_group_size == 0:
-            print("WARNING: No users marked as control for ", index_name, 'skipping.. ')
+            log("WARNING: No users marked as control for ", index_name, 'skipping.. ')
             return None
 
         # join marks and revenue events
@@ -507,7 +507,7 @@ class _CSVHelpers(object):
         columns = self.columns.get(source)
 
         if os.path.exists(cache_file_name):
-            print(now, 'loading from', cache_file_name)
+            log('loading from', cache_file_name)
             return self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
@@ -516,13 +516,13 @@ class _CSVHelpers(object):
             )
 
         if fs.exists(path=s3_cache_file_name):
-            print(now, 'loading from S3 cache', s3_cache_file_name)
+            log('loading from S3 cache', s3_cache_file_name)
 
             # Download the file to local cache first to avoid timeouts during the load.
             # This way, if they happen, restart will be using local copies first.
             fs.get(s3_cache_file_name, cache_file_name)
 
-            print(now, 'stored S3 cache file to local drive, loading', cache_file_name)
+            log('stored S3 cache file to local drive, loading', cache_file_name)
 
             return self._from_parquet_corrected(
                 file_name=cache_file_name,
@@ -531,7 +531,7 @@ class _CSVHelpers(object):
                 columns=columns,
             )
 
-        print(now, 'start loading CSV for', audience, source, date)
+        log('start loading CSV for', audience, source, date)
 
         read_csv_kwargs = {'chunksize': self.chunk_size}
         if columns:
@@ -540,7 +540,7 @@ class _CSVHelpers(object):
         df = pd.DataFrame()
 
         if not fs.exists(path=filename):
-            print(now, 'WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
+            log('WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
             return df
 
         for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False, **read_csv_kwargs):
@@ -561,17 +561,16 @@ class _CSVHelpers(object):
             df = pd.concat([df, filtered_chunk],
                            ignore_index=True, verify_integrity=True)
 
-        print(datetime.now(), 'finished loading CSV for', date.strftime('%d.%m.%Y'),
-              'took', datetime.now() - now)
+        log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
 
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
 
-        print(datetime.now(), 'caching local as parquet', cache_file_name)
+        log('caching local as parquet', cache_file_name)
         self._to_parquet(df, cache_file_name)
 
         # write it to the S3 cache folder as well
-        print(datetime.now(), 'caching on S3 as parquet', s3_cache_file_name)
+        log('caching on S3 as parquet', s3_cache_file_name)
         self._to_parquet(df, s3_cache_file_name)
 
         return df
@@ -629,7 +628,7 @@ class _CSVHelpers(object):
             update_cache = True
 
         if update_cache:
-            print(datetime.now(), 'rewritting cached file with correct types (local and S3)', file_name, s3_file_name)
+            log('rewritting cached file with correct types (local and S3)', file_name, s3_file_name)
             _CSVHelpers._to_parquet(df=df, file_name=file_name)
             fs.put(file_name, s3_file_name)
 
