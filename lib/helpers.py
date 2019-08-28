@@ -7,7 +7,7 @@ import xxhash
 
 from datetime import datetime
 
-from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS
+from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
 cache_folder = "cache-v{0}".format(__version__)
 
@@ -554,7 +554,7 @@ class _CSVHelpers(object):
                 filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
 
             # remove events without a user id
-            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == 36]
+            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
 
             filtered_chunk = self._improve_types(filtered_chunk)
 
@@ -620,8 +620,8 @@ class _CSVHelpers(object):
 
         # remove events without a user id
         if df['user_id'].dtype == 'object':
-            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != 36].empty:
-                df = df[df['user_id'].str.len() == 36]
+            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != USER_ID_LENGTH].empty:
+                df = df[df['user_id'].str.len() == USER_ID_LENGTH]
                 update_cache = True
 
         if df['user_id'].dtype != 'int64':
