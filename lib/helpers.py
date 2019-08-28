@@ -9,9 +9,6 @@ from datetime import datetime
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
-cache_folder = "cache-v{0}".format(__version__)
-
-
 def log(*args):
     """
     Print something in a cleanly formatted fashion, with a timestamp
@@ -51,7 +48,7 @@ class Helpers(object):
     :type use_deduplication: bool
     """
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
-                 use_converters_for_significance=False, use_deduplication=False):
+                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False):
 
         self.customer = customer
 
@@ -73,6 +70,7 @@ class Helpers(object):
         self._csv_helpers = _CSVHelpers(
             customer=self.customer,
             revenue_event=self.revenue_event,
+            export_user_ids=export_user_ids,
         )
 
     @staticmethod
@@ -429,7 +427,7 @@ class Helpers(object):
 
 
 class _CSVHelpers(object):
-    def __init__(self, customer, revenue_event, chunk_size=10 ** 6):
+    def __init__(self, customer, revenue_event, chunk_size=10 ** 6, export_user_ids=False):
         """
         Internal class, containing technical read-write related methods and helpers
         :param customer: Name of the customer the report is created for
@@ -445,12 +443,18 @@ class _CSVHelpers(object):
         self.revenue_event = revenue_event
 
         self.chunk_size = chunk_size
+        self.export_user_ids = export_user_ids
 
         # columns to load from CSV
         self.columns = dict()
         self.columns[CSV_SOURCE_MARKS_AND_SPEND] = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur',
                                                     'event_type']
         self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
+
+    def _save_exported_ids(self, date, audience):
+        if self.export_user_ids:
+            Helpers.export_csv(self.test_users, '{}_{}-{}.csv'.format(audience, date, 'test_users'))
+            Helpers.export_csv(self.control_users, '{}_{}-{}.csv'.format(audience, date, 'control_users'))
 
     def read_csv(self, audience, source, date, chunk_filter_fn=None):
         """
@@ -460,6 +464,10 @@ class _CSVHelpers(object):
         now = datetime.now()
 
         date_str = date.strftime('%Y%m%d')
+
+        cache_folder = "cache-v{0}".format(__version__)
+        if self.export_user_ids:
+            cache_folder += "-user-export"
 
         filename = '{0}/{1}/{2}.csv.gz'.format(
             self._audience_data_path(audience),
@@ -514,12 +522,14 @@ class _CSVHelpers(object):
 
         if os.path.exists(cache_file_name):
             log('loading from', cache_file_name)
-            return self._from_parquet_corrected(
+            ret = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
+            self._save_exported_ids(date=date, audience=audience)
+            return ret
 
         if fs.exists(path=s3_cache_file_name):
             log('loading from S3 cache', s3_cache_file_name)
@@ -530,20 +540,25 @@ class _CSVHelpers(object):
 
             log('stored S3 cache file to local drive, loading', cache_file_name)
 
-            return self._from_parquet_corrected(
+            ret = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
+            self._save_exported_ids(date=date, audience=audience)
+            return ret
 
         log('start loading CSV for', audience, source, date)
+        log('filename', filename)
 
         read_csv_kwargs = {'chunksize': self.chunk_size}
         if columns:
             read_csv_kwargs['usecols'] = columns
 
         df = pd.DataFrame()
+        self.test_users = pd.DataFrame()
+        self.control_users = pd.DataFrame()
 
         if not fs.exists(path=filename):
             log('WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
@@ -562,12 +577,20 @@ class _CSVHelpers(object):
             # remove events without a user id
             filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
 
+            if self.export_user_ids:
+                test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][['user_id']].drop_duplicates()
+                control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
+                self.test_users = pd.concat([self.test_users, test_users_chunk], ignore_index=True, verify_integrity=True)
+                self.control_users = pd.concat([self.control_users, control_users_chunk], ignore_index=True, verify_integrity=True)
+
             filtered_chunk = self._improve_types(filtered_chunk)
 
             df = pd.concat([df, filtered_chunk],
                            ignore_index=True, verify_integrity=True)
 
         log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
+
+        self._save_exported_ids(date=date, audience=audience)
 
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
@@ -610,8 +633,7 @@ class _CSVHelpers(object):
     def _from_parquet(filename):
         return pd.read_parquet(filename, engine='pyarrow')
 
-    @staticmethod
-    def _from_parquet_corrected(file_name, s3_file_name, fs, columns):
+    def _from_parquet_corrected(self, file_name, s3_file_name, fs, columns):
         """
         A little "hack" to convert old file on the fly
         """
@@ -623,13 +645,11 @@ class _CSVHelpers(object):
                 df = df.drop(columns=to_drop)
                 update_cache = True
 
-        # remove events without a user id
-        if df['user_id'].dtype == 'object':
-            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != USER_ID_LENGTH].empty:
-                df = df[df['user_id'].str.len() == USER_ID_LENGTH]
-                update_cache = True
+        if self.export_user_ids:
+            self.test_users = df[df['ab_test_group'] == TEST][['user_id']].drop_duplicates()
+            self.control_users = df[df['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
 
-        if df['user_id'].dtype != 'int64':
+        if df['ts'].dtype != 'int32':
             df = _CSVHelpers._improve_types(df)
             update_cache = True
 
