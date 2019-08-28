@@ -454,25 +454,50 @@ class _CSVHelpers(object):
 
         date_str = date.strftime('%Y%m%d')
 
-        filename = '{0}/{1}/{2}.csv.gz'.format(self._audience_data_path(audience), source, date_str)
+        filename = '{0}/{1}/{2}.csv.gz'.format(
+            self._audience_data_path(audience),
+            source,
+            date_str,
+        )
 
         # local cache
-        cache_dir = '{0}/{1}/{2}'.format(cache_folder, audience, source)
+        cache_dir = '{0}/{1}/{2}'.format(
+            cache_folder,
+            audience,
+            source,
+        )
+
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
 
-        cache_file_name = '{0}/{1}.parquet'.format(cache_dir, date_str)
+        cache_file_name = '{0}/{1}.parquet'.format(
+            cache_dir,
+            date_str,
+        )
 
         # s3 cache (useful if we don't have enough space on the Colab instance)
-        s3_cache_file_name = '{0}/{1}/{2}/{3}.parquet'.format(self._audience_data_path(audience), source, cache_folder,
-                                                              date_str)
+        s3_cache_file_name = '{0}/{1}/{2}/{3}.parquet'.format(
+            self._audience_data_path(audience),
+            source,
+            cache_folder,
+            date_str,
+        )
 
         if source == CSV_SOURCE_ATTRIBUTIONS:
-            cache_file_name = '{0}/{1}-{2}.parquet'.format(cache_dir, date_str, self.revenue_event)
+            cache_file_name = '{0}/{1}-{2}.parquet'.format(
+                cache_dir,
+                date_str,
+                self.revenue_event,
+            )
 
             # s3 cache (useful if we don't have enough space on the Colab instance)
-            s3_cache_file_name = '{0}/{1}/{2}/{3}-{4}.parquet' \
-                .format(self._audience_data_path(audience), source, cache_folder, date_str, self.revenue_event)
+            s3_cache_file_name = '{0}/{1}/{2}/{3}-{4}.parquet'.format(
+                self._audience_data_path(audience),
+                source,
+                cache_folder,
+                date_str,
+                self.revenue_event,
+            )
 
         fs = s3fs.S3FileSystem(anon=False)
         fs.connect_timeout = 10  # defaults to 5
@@ -551,7 +576,10 @@ class _CSVHelpers(object):
         return df
 
     def _audience_data_path(self, audience):
-        return "s3://remerge-customers/{0}/uplift_data/{1}".format(self.customer, audience)
+        return "s3://remerge-customers/{0}/uplift_data/{1}".format(
+            self.customer,
+            audience,
+        )
 
     @staticmethod
     def _to_parquet(df, file_name):
