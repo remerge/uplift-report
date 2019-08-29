@@ -50,6 +50,7 @@ class Helpers(object):
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
     """
+
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False):
 
@@ -270,8 +271,8 @@ class Helpers(object):
             return None
 
         # join marks and revenue events
-        merged_df = self._merge(marks_df=marks_df, attributions_df=attributions_df)
-        grouped_revenue = merged_df.groupby(by='ab_test_group')
+        merged_users_df = self._merge_into_users_df(marks_df=marks_df, attributions_df=attributions_df)
+        grouped_users = merged_users_df.groupby(by='ab_test_group')
 
         # init all KPIs with 0s first:
         test_revenue_micros = 0
@@ -283,21 +284,17 @@ class Helpers(object):
         control_converters = 0
 
         # we might not have any events for a certain group in the time-period,
-        if TEST in grouped_revenue.groups:
-            test_revenue_df = grouped_revenue.get_group(TEST)
-            test_revenue_micros = test_revenue_df['revenue_eur'].sum()
-            # test_conversions = test_revenue_df['partner_event'].count()
-            # as we filtered by revenue event and dropped the column we can just use
-            test_conversions = test_revenue_df['user_id'].count()
-            test_converters = test_revenue_df['user_id'].nunique()
+        if TEST in grouped_users.groups:
+            test_users_df = grouped_users.get_group(TEST)
+            test_revenue_micros = test_users_df['revenue_eur'].sum()
+            test_conversions = test_users_df['conversion_count'].sum()
+            test_converters = (test_users_df['conversion_count'] > 0).sum()
 
-        if CONTROL in grouped_revenue.groups:
-            control_revenue_df = grouped_revenue.get_group(CONTROL)
-            control_revenue_micros = control_revenue_df['revenue_eur'].sum()
-            # control_conversions = control_revenue_df['partner_event'].count()
-            # as we filtered by revenue event and dropped the column we can just use
-            control_conversions = control_revenue_df['user_id'].count()
-            control_converters = control_revenue_df['user_id'].nunique()
+        if CONTROL in grouped_users.groups:
+            control_users_df = grouped_users.get_group(CONTROL)
+            control_revenue_micros = control_users_df['revenue_eur'].sum()
+            control_conversions = control_users_df['conversion_count'].sum()
+            control_converters = (control_users_df['conversion_count'] > 0).sum()
 
         # calculate KPIs
         test_revenue = test_revenue_micros / 10 ** 6
@@ -412,14 +409,45 @@ class Helpers(object):
         return ad_spend_micros / 10 ** 6
 
     @staticmethod
-    def _merge(marks_df, attributions_df):
+    def _merge_into_users_df(marks_df, attributions_df):
         """
-        `merge` joins the marked users with the revenue events and excludes any revenue event that happened before the
-        user was marked.
-        """
-        merged_df = pd.merge(attributions_df, marks_df, on='user_id')
+        Takes the mark and revenue dataframes, merge them with left join into a dataframe with users as entries, where users
+        without any attributions are included.
+        Attribution events that come earlier than corresponding mark events will be removed;
+        Users who have inconsistent group assignments between mark data and attribution data will be removed.
 
-        return merged_df[merged_df.ts_x > merged_df.ts_y]
+        :param marks_df: Dataframe with each entry being a mark event
+        :param attributions_df: Dataframe with each entry being a conversion event
+
+        :type marks_df: pandas.DataFrame
+        :type attributions_df: pandas.DataFrame
+
+        :return: Dataframe with each entry being a user
+        :rtype: pandas.DataFrame
+        """
+        # All users from the mark side should be included.
+        merged_df = pd.merge(marks_df, attributions_df, on='user_id', how='left')
+
+        # There was no conversion, if there was no attribution timestamp
+        merged_df['conversion_count'] = ~merged_df.ts_y.isnull() * 1
+
+        # Remove the entries if the revenue event is earlier than the mark. Those shouldn't count.
+        # But this can be wrong after we implement regular re-marks of users
+        merged_df.conversion_count = (merged_df.ts_x < merged_df.ts_y) * merged_df.conversion_count
+        merged_df.revenue_eur = (merged_df.ts_x < merged_df.ts_y) * merged_df.revenue_eur
+
+        # note that we are using the group from marks here, because many users don't appear in attributions.
+        # but it should not be a problem here because we are removing all mismatches anyway
+        merged_df = merged_df[['user_id', 'ab_test_group', 'conversion_count', 'revenue_eur']]
+
+        # create a dataframe with users as entries.
+        users_df = merged_df.groupby('user_id').agg({
+            'ab_test_group': 'first',
+            'conversion_count': sum,
+            'revenue_eur': sum,
+        })
+
+        return users_df
 
 
 class _CSVHelpers(object):
