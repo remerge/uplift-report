@@ -296,6 +296,9 @@ class Helpers(object):
             control_conversions = control_users_df['conversion_count'].sum()
             control_converters = (control_users_df['conversion_count'] > 0).sum()
 
+        test_conversions_sd = test_users_df['conversion_count'].std()
+        control_conversions_sd = control_users_df['conversion_count'].std()
+
         # calculate KPIs
         test_revenue = test_revenue_micros / 10 ** 6
         control_revenue = control_revenue_micros / 10 ** 6
@@ -376,7 +379,9 @@ class Helpers(object):
             "iCPA": icpa,
             "chi^2": chi,
             "p-value": p,
-            "significant": significant
+            "significant": significant,
+            "test conversions SD": test_conversions_sd,
+            "control conversions SD": control_conversions_sd
         }
 
         # show results as a dataframe
