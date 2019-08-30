@@ -212,7 +212,10 @@ class Helpers(object):
 
     @staticmethod
     def _filter_by_user_ids(df, user_ids):
-        return df[df['user_id'].isin(user_ids)]
+        if 'user_id' in df.columns:
+            return df[df['user_id'].isin(user_ids)]
+        else:
+            return df
 
     @staticmethod
     def _drop_duplicates_in_attributions(df, max_timedelta):
@@ -395,6 +398,9 @@ class Helpers(object):
         marked once for an audience he will have the same group allocation for consecutive marks (different campaigns)
         unless manually reset on audience level.
         """
+        if df.empty:
+            return df
+
         mark_df = df[df.event_type == 'mark']
 
         # we dont need the event_type anymore (to save memory)
