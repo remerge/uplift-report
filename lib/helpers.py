@@ -1,4 +1,6 @@
 import os
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import scipy
 import scipy.stats
@@ -33,10 +35,12 @@ class Helpers(object):
                 "All US campaigns": [1234, 3456, 5678],
                 "All EU campaigns": [4312, 5123],
             }
-    :param per_campaign_results: Split uplift results per campaign
+            (Default: None)
+    :param per_campaign_results: Split uplift results per campaign (Default: False)
     :param use_converters_for_significance: Base statistical calculations off of unique converters instead
-        of conversions
-    :param use_deduplication: Enable deduplication heuristic for AppsFlyer
+        of conversions (Default: false)
+    :param use_deduplication: Enable deduplication heuristic for AppsFlyer (Default: False)
+    :param confidence_level: Confidence level, required to calculate confidence intervals (Default: 0.95)
 
     :type customer: str
     :type dates: pandas.DatetimeIndex
@@ -46,10 +50,12 @@ class Helpers(object):
     :type per_campaign_results: bool
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
+    :type confidence_level: float
     """
 
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
-                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False):
+                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False,
+                 confidence_level=0.95, bootstrap_size=10000):
 
         self.customer = customer
 
@@ -73,6 +79,15 @@ class Helpers(object):
             revenue_event=self.revenue_event,
             export_user_ids=export_user_ids,
         )
+
+        self.confidence_level = confidence_level
+
+        if not bootstrap_size % 10:
+            # we have a round number, round number - 1 gives the best results
+            self.bootstrap_size = bootstrap_size - 1
+        else:
+            # it ain't round, just use it "as is"
+            self.bootstrap_size = bootstrap_size
 
     @staticmethod
     def version():
@@ -158,7 +173,7 @@ class Helpers(object):
                     marks_and_spend_df=group_df,
                     attributions_df=attributions_df,
                     index_name=name,
-                    m_hypothesis=len(self.groups))
+                )
 
         if report_df is not None and self.per_campaign_results:
             campaigns = marks_and_spend_df['campaign_id'].unique()
@@ -169,7 +184,6 @@ class Helpers(object):
                     marks_and_spend_df=campaign_df,
                     attributions_df=attributions_df,
                     index_name=name,
-                    m_hypothesis=len(campaigns),
                 )
 
         return report_df
@@ -248,7 +262,256 @@ class Helpers(object):
 
         return filtered[['ts', 'user_id', 'revenue_eur']]
 
-    def _uplift(self, marks_and_spend_df, attributions_df, index_name, m_hypothesis=1):
+    def _bootstrap_mean_ci(self, sample, plot=False):
+        """
+        Takes a sample and find the two-sided confidence interval of the sample, by bootstrap resampling.
+
+        :param sample: The sample we have.
+        :param plot: Whether to plot a histogram of the sample means with the calculated confidence interval
+
+        :type sample: pandas.Series
+        :type plot: bool
+
+        :return: A tuple of lower and upper bounds of the confidence interval
+        :rtype: (float, float)
+
+        """
+        # initialize the bootstrap samples
+        # b_means = np.zeros(self.bootstrap_size)
+        #
+        # for i in range(self.bootstrap_size):
+        #     b_means[i] = np.random.choice(sample, len(sample), replace=True).mean()
+
+        bootstrapped_means = [np.random.choice(sample, len(sample), replace=True).mean() for _ in
+                              range(self.bootstrap_size)]
+
+        # b_means.sort()
+
+        bootstrapped_means.sort()
+
+        # l_bound = b_means[int(((1 - confidence_level) / 2) * (bootstrap_size + 1))]
+        lower_bound = bootstrapped_means[int(((1 - self.confidence_level) / 2) * (self.bootstrap_size + 1))]
+
+        # u_bound = b_means[int(((1 - confidence_level) / 2 + confidence_level) * (bootstrap_size + 1))]
+        upper_bound = bootstrapped_means[int(((1 - self.confidence_level) / 2 + self.confidence_level) *
+                                             (self.bootstrap_size + 1))]
+        if plot:
+            self._plot_ci(
+                bootstrapped_means=bootstrapped_means,
+                sample_mean=sample.mean(),
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+            )
+        return lower_bound, upper_bound
+
+    def _plot_ci(self, bootstrapped_means, sample_mean, lower_bound, upper_bound):
+        plt.hist(bootstrapped_means, bins=200)
+        plt.vlines(upper_bound, ymin=0, ymax=self.bootstrap_size / 50, color='red')
+        plt.vlines(lower_bound, ymin=0, ymax=self.bootstrap_size / 50, color='red')
+        plt.vlines(sample_mean, ymin=0, ymax=self.bootstrap_size / 50, color='yellow')  # for the sample mean
+        plt.show()
+
+    def _uplift(
+            self, marks_and_spend_df, attributions_df, index_name, plot_bootstrap_distribution=False
+    ):
+        """
+        Computes the uplift results. All incremental KPI estimates are accompanied by confidence intervals.
+        Confidence intervals for revenue and conversions related numbers and KPIs will be estimated by bootstrapping, while
+        for converters the binomial distribution will be used.
+
+        :param marks_and_spend_df: Dataframe containing information on marks and spend
+        :param attributions_df: Dataframe with each entry being a conversion event
+        :param index_name: Name of the data in question. To label the output and warning messages.
+
+        :type marks_and_spend_df: pandas.DataFrame
+        :type attributions_df: pandas.DataFrame
+        :type index_name: str
+
+        :return: Dataframe containing numbers and KPIs from the data.
+        :rtype: pandas.DataFrame
+        """
+        # filter for mark events
+        marks_df = self._marked(marks_and_spend_df)
+
+        # calculate the ad spend
+        ad_spend = self._calculate_ad_spend(marks_and_spend_df)
+
+        # join marks and revenue events
+        merged_users_df = self._merge_into_users_df(marks_df=marks_df, attributions_df=attributions_df)
+        grouped_users = merged_users_df.groupby(by='ab_test_group')
+
+        test_users_df = grouped_users.get_group(TEST)
+        test_group_size = len(test_users_df)
+
+        if not test_group_size:
+            log("WARNING: No users marked as test for ", index_name, 'skipping.. ')
+            return None
+
+        control_users_df = grouped_users.get_group(CONTROL)
+        control_group_size = len(control_users_df)
+
+        if not control_group_size:
+            log("WARNING: No users marked as control for ", index_name, 'skipping.. ')
+            return None
+
+        test_revenue_micros = test_users_df['revenue_eur'].sum()
+        test_conversions = test_users_df['conversion_count'].sum()
+        test_converters = (test_users_df['conversion_count'] > 0).sum()
+
+        control_revenue_micros = control_users_df['revenue_eur'].sum()
+        control_conversions = control_users_df['conversion_count'].sum()
+        control_converters = (control_users_df['conversion_count'] > 0).sum()
+
+        # samples for bootstrapping
+        control_group_conversions_sample = control_users_df['conversion_count']
+        control_group_revenue_sample = control_users_df['revenue_eur']
+
+        ratio = float(test_group_size) / float(control_group_size)
+
+        # Converter KPIs
+        scaled_control_converters = float(control_converters) * ratio
+        no_treat_converters_l_bound = scipy.stats.binom.ppf(
+            (1 - self.confidence_level) / 2,
+            control_group_size,
+            control_converters / control_group_size,
+            )
+        no_treat_converters_u_bound = scipy.stats.binom.ppf(
+            ((1 - self.confidence_level) / 2) + self.confidence_level,
+            control_group_size,
+            control_converters / control_group_size,
+            )
+
+        incremental_converters_estimate = test_converters - control_converters * ratio
+
+        incremental_converters_l_bound = test_converters - no_treat_converters_u_bound * ratio
+        incremental_converters_u_bound = test_converters - no_treat_converters_l_bound * ratio
+
+        cost_per_incremental_converter_estimate = ad_spend / incremental_converters_estimate
+
+        cost_per_incremental_converter_l_bound = ad_spend / incremental_converters_u_bound
+        cost_per_incremental_converter_u_bound = ad_spend / incremental_converters_l_bound
+
+        if cost_per_incremental_converter_estimate < 0:
+            cost_per_incremental_converter_estimate = 'Negative incremental converters estimate'
+        if cost_per_incremental_converter_u_bound < 0:
+            cost_per_incremental_converter_l_bound = 'CI contains negative value, cannot be intepreted'
+            cost_per_incremental_converter_u_bound = 'CI contains negative value, cannot be intepreted'
+
+        # Conversion KPIs
+        scaled_control_conversions = float(control_conversions) * ratio
+
+        mean_no_treat_conversions_l_bound, mean_no_treat_conversions_u_bound = self._bootstrap_mean_ci(
+            sample=control_group_conversions_sample,
+            plot=plot_bootstrap_distribution,
+        )
+
+        scaled_no_treat_conversions_l_bound = mean_no_treat_conversions_l_bound * control_group_size * ratio
+        scaled_no_treat_conversions_u_bound = mean_no_treat_conversions_u_bound * control_group_size * ratio
+
+        incremental_conversions_estimate = test_conversions - scaled_control_conversions
+
+        incremental_conversions_l_bound = test_conversions - scaled_no_treat_conversions_u_bound
+        incremental_conversions_u_bound = test_conversions - scaled_no_treat_conversions_l_bound
+
+        icpa_estimate = ad_spend / incremental_conversions_estimate
+
+        icpa_l_bound = ad_spend / incremental_conversions_u_bound
+        icpa_u_bound = ad_spend / incremental_conversions_l_bound
+
+        if icpa_estimate < 0:
+            icpa_estimate = 'Negative incremental conversions estimate'
+        if icpa_u_bound < 0:
+            icpa_l_bound = icpa_u_bound = 'CI contains negative value, cannot be intepreted'
+
+        no_treat_cvr_l_bound = scaled_no_treat_conversions_l_bound / test_group_size
+        no_treat_cvr_u_bound = scaled_no_treat_conversions_u_bound / test_group_size
+
+        uplift_estimate = 0
+
+        test_cvr = test_conversions / test_group_size
+        control_cvr = control_conversions / control_group_size
+
+        if control_cvr > 0:
+            uplift_estimate = test_cvr / control_cvr - 1
+            uplift_l_bound = test_cvr / no_treat_cvr_u_bound - 1
+            uplift_u_bound = test_cvr / no_treat_cvr_l_bound - 1
+
+        # Revenue KPIs
+        test_revenue = test_revenue_micros / 10 ** 6
+        control_revenue = control_revenue_micros / 10 ** 6
+
+        scaled_control_revenue = float(control_revenue) * ratio
+
+        mean_no_treat_revenue_micro_l_bound, mean_no_treat_revenue_micro_u_bound = self._bootstrap_mean_ci(
+            sample=control_group_revenue_sample,
+            plot=plot_bootstrap_distribution,
+        )
+
+        scaled_no_treat_revenue_l_bound = mean_no_treat_revenue_micro_l_bound * control_group_size * ratio / 10 ** 6
+        scaled_no_treat_revenue_u_bound = mean_no_treat_revenue_micro_u_bound * control_group_size * ratio / 10 ** 6
+
+        incremental_revenue_estimate = test_revenue - scaled_control_revenue
+        incremental_revenue_l_bound = test_revenue - scaled_no_treat_revenue_u_bound
+        incremental_revenue_u_bound = test_revenue - scaled_no_treat_revenue_l_bound
+
+        iroas_estimate = incremental_revenue_estimate / ad_spend
+        iroas_l_bound = incremental_revenue_l_bound / ad_spend
+        iroas_u_bound = incremental_revenue_u_bound / ad_spend
+
+        rev_per_conversion_test = 0
+        rev_per_conversion_control = 0
+
+        if test_conversions > 0:
+            rev_per_conversion_test = test_revenue / test_conversions
+        if control_conversions > 0:
+            rev_per_conversion_control = control_revenue / control_conversions
+
+        # Output
+        dataframe_dict = {
+            "ad spend": ad_spend,
+            "total revenue": test_revenue + control_revenue,
+            "control group size": control_group_size,
+            "test group size": test_group_size,
+            "ratio test/control": ratio,
+            "control converters": control_converters,
+            "control converters (scaled)": scaled_control_converters,
+            "test converters": test_converters,
+            "incremental converters estimate": incremental_converters_estimate,
+            f"incremental converters {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_converters_l_bound,
+            f"incremental converters {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_converters_u_bound,
+            "cost per incr. converter estimate": cost_per_incremental_converter_estimate,
+            f"cost per incr. converter {CONFIDENCE_LEVEL * 100}% CI lower bound": cost_per_incremental_converter_l_bound,
+            f"cost per incr. converter {CONFIDENCE_LEVEL * 100}% CI upper bound": cost_per_incremental_converter_u_bound,
+            "control conversions": control_conversions,
+            "control conversions (scaled)": scaled_control_conversions,
+            "test conversions": test_conversions,
+            "incremental conversions estimate": incremental_conversions_estimate,
+            f"incremental converions {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_conversions_l_bound,
+            f"incremental converions {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_conversions_u_bound,
+            "iCPA estimate": icpa_estimate,
+            f"iCPA {CONFIDENCE_LEVEL * 100}% CI lower bound": icpa_l_bound,
+            f"iCPA {CONFIDENCE_LEVEL * 100}% CI upper bound": icpa_u_bound,
+            "control CVR": control_cvr,
+            "test CVR": test_cvr,
+            "CVR uplift estimate": uplift_estimate,
+            f"CVR uplift {CONFIDENCE_LEVEL * 100}% CI lower bound": uplift_l_bound,
+            f"CVR uplift {CONFIDENCE_LEVEL * 100}% CI upper bound": uplift_u_bound,
+            "control revenue": control_revenue,
+            "control revenue (scaled)": scaled_control_revenue,
+            "test revenue": test_revenue,
+            "incremental revenue estimate": incremental_revenue_estimate,
+            f"incremental revenue {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_revenue_l_bound,
+            f"incremental revenue {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_revenue_u_bound,
+            "iROAS estimate": iroas_estimate,
+            f"iROAS {CONFIDENCE_LEVEL * 100}% CI lower bound": iroas_l_bound,
+            f"iROAS {CONFIDENCE_LEVEL * 100}% CI upper bound": iroas_u_bound,
+            "rev/conversions control": rev_per_conversion_control,
+            "rev/conversions test": rev_per_conversion_test,
+        }
+
+        return pd.DataFrame(dataframe_dict, index=[index_name]).transpose()
+
+    def _old_uplift(self, marks_and_spend_df, attributions_df, index_name, m_hypothesis=1):
         """
         # Uplift Calculation
 
