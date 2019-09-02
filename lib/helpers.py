@@ -374,28 +374,28 @@ class Helpers(object):
             (1 - self.confidence_level) / 2,
             control_group_size,
             control_converters / control_group_size,
-            )
+        )
         no_treat_converters_u_bound = scipy.stats.binom.ppf(
             ((1 - self.confidence_level) / 2) + self.confidence_level,
             control_group_size,
             control_converters / control_group_size,
-            )
+        )
 
         incremental_converters_estimate = test_converters - control_converters * ratio
 
-        incremental_converters_l_bound = test_converters - no_treat_converters_u_bound * ratio
-        incremental_converters_u_bound = test_converters - no_treat_converters_l_bound * ratio
+        incremental_converters_lower_bound = test_converters - no_treat_converters_u_bound * ratio
+        incremental_converters_upper_bound = test_converters - no_treat_converters_l_bound * ratio
 
         cost_per_incremental_converter_estimate = ad_spend / incremental_converters_estimate
 
-        cost_per_incremental_converter_l_bound = ad_spend / incremental_converters_u_bound
-        cost_per_incremental_converter_u_bound = ad_spend / incremental_converters_l_bound
+        cost_per_incremental_converter_lower_bound = ad_spend / incremental_converters_upper_bound
+        cost_per_incremental_converter_upper_bound = ad_spend / incremental_converters_lower_bound
 
         if cost_per_incremental_converter_estimate < 0:
             cost_per_incremental_converter_estimate = 'Negative incremental converters estimate'
-        if cost_per_incremental_converter_u_bound < 0:
-            cost_per_incremental_converter_l_bound = 'CI contains negative value, cannot be intepreted'
-            cost_per_incremental_converter_u_bound = 'CI contains negative value, cannot be intepreted'
+        if cost_per_incremental_converter_upper_bound < 0:
+            cost_per_incremental_converter_lower_bound = 'CI contains negative value, cannot be intepreted'
+            cost_per_incremental_converter_upper_bound = 'CI contains negative value, cannot be intepreted'
 
         # Conversion KPIs
         scaled_control_conversions = float(control_conversions) * ratio
@@ -410,18 +410,18 @@ class Helpers(object):
 
         incremental_conversions_estimate = test_conversions - scaled_control_conversions
 
-        incremental_conversions_l_bound = test_conversions - scaled_no_treat_conversions_u_bound
-        incremental_conversions_u_bound = test_conversions - scaled_no_treat_conversions_l_bound
+        incremental_conversions_lower_bound = test_conversions - scaled_no_treat_conversions_u_bound
+        incremental_conversions_upper_bound = test_conversions - scaled_no_treat_conversions_l_bound
 
         icpa_estimate = ad_spend / incremental_conversions_estimate
 
-        icpa_l_bound = ad_spend / incremental_conversions_u_bound
-        icpa_u_bound = ad_spend / incremental_conversions_l_bound
+        icpa_lower_bound = ad_spend / incremental_conversions_upper_bound
+        icpa_upper_bound = ad_spend / incremental_conversions_lower_bound
 
         if icpa_estimate < 0:
             icpa_estimate = 'Negative incremental conversions estimate'
-        if icpa_u_bound < 0:
-            icpa_l_bound = icpa_u_bound = 'CI contains negative value, cannot be intepreted'
+        if icpa_upper_bound < 0:
+            icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be intepreted'
 
         no_treat_cvr_l_bound = scaled_no_treat_conversions_l_bound / test_group_size
         no_treat_cvr_u_bound = scaled_no_treat_conversions_u_bound / test_group_size
@@ -433,8 +433,12 @@ class Helpers(object):
 
         if control_cvr > 0:
             uplift_estimate = test_cvr / control_cvr - 1
-            uplift_l_bound = test_cvr / no_treat_cvr_u_bound - 1
-            uplift_u_bound = test_cvr / no_treat_cvr_l_bound - 1
+
+            uplift_lower_bound = test_cvr / no_treat_cvr_u_bound - 1
+            uplift_upper_bound = test_cvr / no_treat_cvr_l_bound - 1
+        else:
+            uplift_lower_bound = 'Cannot calculate with 0 control CVR'
+            uplift_upper_bound = 'Cannot calculate with 0 control CVR'
 
         # Revenue KPIs
         test_revenue = test_revenue_micros / 10 ** 6
@@ -442,21 +446,23 @@ class Helpers(object):
 
         scaled_control_revenue = float(control_revenue) * ratio
 
-        mean_no_treat_revenue_micro_l_bound, mean_no_treat_revenue_micro_u_bound = self._bootstrap_mean_ci(
+        mean_no_treat_revenue_micro_lower_bound, mean_no_treat_revenue_micro_upper_bound = self._bootstrap_mean_ci(
             sample=control_group_revenue_sample,
             plot=plot_bootstrap_distribution,
         )
 
-        scaled_no_treat_revenue_l_bound = mean_no_treat_revenue_micro_l_bound * control_group_size * ratio / 10 ** 6
-        scaled_no_treat_revenue_u_bound = mean_no_treat_revenue_micro_u_bound * control_group_size * ratio / 10 ** 6
+        scaled_no_treat_revenue_lower_bound = \
+            mean_no_treat_revenue_micro_lower_bound * control_group_size * ratio / 10 ** 6
+        scaled_no_treat_revenue_upper_bound = \
+            mean_no_treat_revenue_micro_upper_bound * control_group_size * ratio / 10 ** 6
 
         incremental_revenue_estimate = test_revenue - scaled_control_revenue
-        incremental_revenue_l_bound = test_revenue - scaled_no_treat_revenue_u_bound
-        incremental_revenue_u_bound = test_revenue - scaled_no_treat_revenue_l_bound
+        incremental_revenue_lower_bound = test_revenue - scaled_no_treat_revenue_upper_bound
+        incremental_revenue_upper_bound = test_revenue - scaled_no_treat_revenue_lower_bound
 
         iroas_estimate = incremental_revenue_estimate / ad_spend
-        iroas_l_bound = incremental_revenue_l_bound / ad_spend
-        iroas_u_bound = incremental_revenue_u_bound / ad_spend
+        iroas_lower_bound = incremental_revenue_lower_bound / ad_spend
+        iroas_upper_bound = incremental_revenue_upper_bound / ad_spend
 
         rev_per_conversion_test = 0
         rev_per_conversion_control = 0
@@ -468,45 +474,46 @@ class Helpers(object):
 
         # Output
         dataframe_dict = {
-            "ad spend": ad_spend,
-            "total revenue": test_revenue + control_revenue,
-            "control group size": control_group_size,
-            "test group size": test_group_size,
-            "ratio test/control": ratio,
-            "control converters": control_converters,
-            "control converters (scaled)": scaled_control_converters,
-            "test converters": test_converters,
-            "incremental converters estimate": incremental_converters_estimate,
-            f"incremental converters {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_converters_l_bound,
-            f"incremental converters {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_converters_u_bound,
-            "cost per incr. converter estimate": cost_per_incremental_converter_estimate,
-            f"cost per incr. converter {CONFIDENCE_LEVEL * 100}% CI lower bound": cost_per_incremental_converter_l_bound,
-            f"cost per incr. converter {CONFIDENCE_LEVEL * 100}% CI upper bound": cost_per_incremental_converter_u_bound,
-            "control conversions": control_conversions,
-            "control conversions (scaled)": scaled_control_conversions,
-            "test conversions": test_conversions,
-            "incremental conversions estimate": incremental_conversions_estimate,
-            f"incremental converions {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_conversions_l_bound,
-            f"incremental converions {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_conversions_u_bound,
-            "iCPA estimate": icpa_estimate,
-            f"iCPA {CONFIDENCE_LEVEL * 100}% CI lower bound": icpa_l_bound,
-            f"iCPA {CONFIDENCE_LEVEL * 100}% CI upper bound": icpa_u_bound,
-            "control CVR": control_cvr,
-            "test CVR": test_cvr,
-            "CVR uplift estimate": uplift_estimate,
-            f"CVR uplift {CONFIDENCE_LEVEL * 100}% CI lower bound": uplift_l_bound,
-            f"CVR uplift {CONFIDENCE_LEVEL * 100}% CI upper bound": uplift_u_bound,
-            "control revenue": control_revenue,
-            "control revenue (scaled)": scaled_control_revenue,
-            "test revenue": test_revenue,
-            "incremental revenue estimate": incremental_revenue_estimate,
-            f"incremental revenue {CONFIDENCE_LEVEL * 100}% CI lower bound": incremental_revenue_l_bound,
-            f"incremental revenue {CONFIDENCE_LEVEL * 100}% CI upper bound": incremental_revenue_u_bound,
-            "iROAS estimate": iroas_estimate,
-            f"iROAS {CONFIDENCE_LEVEL * 100}% CI lower bound": iroas_l_bound,
-            f"iROAS {CONFIDENCE_LEVEL * 100}% CI upper bound": iroas_u_bound,
-            "rev/conversions control": rev_per_conversion_control,
-            "rev/conversions test": rev_per_conversion_test,
+            'ad spend': ad_spend,
+            'total revenue': test_revenue + control_revenue,
+            'control group size': control_group_size,
+            'test group size': test_group_size,
+            'ratio test/control': ratio,
+            'control converters': control_converters,
+            'control converters (scaled)': scaled_control_converters,
+            'test converters': test_converters,
+            'confidence level': '{0}%'.format(self.confidence_level * 100),
+            'incremental converters estimate': incremental_converters_estimate,
+            'incremental converters CI lower bound': incremental_converters_lower_bound,
+            'incremental converters CI upper bound': incremental_converters_upper_bound,
+            'cost per incr. converter estimate': cost_per_incremental_converter_estimate,
+            'cost per incr. converter CI lower bound': cost_per_incremental_converter_lower_bound,
+            'cost per incr. converter CI upper bound': cost_per_incremental_converter_upper_bound,
+            'control conversions': control_conversions,
+            'control conversions (scaled)': scaled_control_conversions,
+            'test conversions': test_conversions,
+            'incremental conversions estimate': incremental_conversions_estimate,
+            'incremental converions CI lower bound': incremental_conversions_lower_bound,
+            'incremental converions CI upper bound': incremental_conversions_upper_bound,
+            'iCPA estimate': icpa_estimate,
+            'iCPA CI lower bound': icpa_lower_bound,
+            'iCPA CI upper bound': icpa_upper_bound,
+            'control CVR': control_cvr,
+            'test CVR': test_cvr,
+            'CVR uplift estimate': uplift_estimate,
+            'CVR uplift CI lower bound': uplift_lower_bound,
+            'CVR uplift CI upper bound': uplift_upper_bound,
+            'control revenue': control_revenue,
+            'control revenue (scaled)': scaled_control_revenue,
+            'test revenue': test_revenue,
+            'incremental revenue estimate': incremental_revenue_estimate,
+            'incremental revenue CI lower bound': incremental_revenue_lower_bound,
+            'incremental revenue CI upper bound': incremental_revenue_upper_bound,
+            'iROAS estimate': iroas_estimate,
+            'iROAS CI lower bound': iroas_lower_bound,
+            'iROAS CI upper bound': iroas_upper_bound,
+            'rev/conversions control': rev_per_conversion_control,
+            'rev/conversions test': rev_per_conversion_test,
         }
 
         return pd.DataFrame(dataframe_dict, index=[index_name]).transpose()
