@@ -201,7 +201,8 @@ class Helpers(object):
 
         return report_df
 
-    def display_report(self, report_df, raw=False):
+    @staticmethod
+    def display_report(report_df, raw=False):
         """
         Display the report
 
@@ -216,8 +217,52 @@ class Helpers(object):
 
         :return: None
         """
-        pass
+        # set formatting options
+        pd.set_option('display.float_format', '{:.5f}'.format)
+        # disable truncation
+        pd.set_option('display.max_colwidth', -1)
 
+        if raw:
+            return display(report_df)
+
+        # create a dataframe to display, that is going to be modified to be human-readable
+
+        display_df = report_df.copy().transpose()
+
+        # first, non-confidence interval transformations
+        display_df = _DisplayConverters.currency_transform(
+            df=display_df,
+            column_names=['ad spend', 'total revenue', 'revenue/conversions test', 'revenue/conversions control',
+                          'control revenue', 'control revenue (scaled)', 'test revenue']
+        )
+
+        display_df = _DisplayConverters.count_transform(
+            df=display_df,
+            column_names=['control group size', 'test group size', 'control converters', 'control converters (scaled)',
+                          'test converters', 'control conversions', 'control conversions (scaled)']
+        )
+
+        display_df = _DisplayConverters.percentage_transform(
+            df=display_df,
+            column_names=['control CVR', 'test CVR']
+        )
+
+        display_df = _DisplayConverters.confidence_interval_count_transform(
+            df=display_df,
+            value_names=['incremental converters', 'incremental conversions']
+        )
+
+        display_df = _DisplayConverters.confidence_interval_currency_transform(
+            df=display_df,
+            value_names=['cost per incr. converter', 'iCPA', 'incremental revenue'],
+        )
+
+        display_df = _DisplayConverters.confidence_interval_percentage_transform(
+            df=display_df,
+            value_names=['CVR uplift', 'iROAS']
+        )
+
+        return display(display_df.transpose())
 
     @staticmethod
     def export_csv(df, file_name):
@@ -425,8 +470,8 @@ class Helpers(object):
         if cost_per_incremental_converter_estimate < 0:
             cost_per_incremental_converter_estimate = 'Negative incremental converters estimate'
         if cost_per_incremental_converter_upper_bound < 0:
-            cost_per_incremental_converter_lower_bound = 'CI contains negative value, cannot be intepreted'
-            cost_per_incremental_converter_upper_bound = 'CI contains negative value, cannot be intepreted'
+            cost_per_incremental_converter_lower_bound = cost_per_incremental_converter_upper_bound = \
+                'CI contains negative value, cannot be interpreted'
 
         # Conversion KPIs
         scaled_control_conversions = float(control_conversions) * ratio
@@ -452,7 +497,7 @@ class Helpers(object):
         if icpa_estimate < 0:
             icpa_estimate = 'Negative incremental conversions estimate'
         if icpa_upper_bound < 0:
-            icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be intepreted'
+            icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be interpreted'
 
         no_treat_cvr_l_bound = scaled_no_treat_conversions_l_bound / test_group_size
         no_treat_cvr_u_bound = scaled_no_treat_conversions_u_bound / test_group_size
@@ -468,8 +513,7 @@ class Helpers(object):
             uplift_lower_bound = test_cvr / no_treat_cvr_u_bound - 1
             uplift_upper_bound = test_cvr / no_treat_cvr_l_bound - 1
         else:
-            uplift_lower_bound = 'Cannot calculate with 0 control CVR'
-            uplift_upper_bound = 'Cannot calculate with 0 control CVR'
+            uplift_lower_bound = uplift_upper_bound = 'Cannot calculate with 0 control CVR'
 
         # Revenue KPIs
         test_revenue = test_revenue_micros / 10 ** 6
@@ -524,8 +568,8 @@ class Helpers(object):
             'control conversions (scaled)': scaled_control_conversions,
             'test conversions': test_conversions,
             'incremental conversions estimate': incremental_conversions_estimate,
-            'incremental converions CI lower bound': incremental_conversions_lower_bound,
-            'incremental converions CI upper bound': incremental_conversions_upper_bound,
+            'incremental conversions CI lower bound': incremental_conversions_lower_bound,
+            'incremental conversions CI upper bound': incremental_conversions_upper_bound,
             'iCPA estimate': icpa_estimate,
             'iCPA CI lower bound': icpa_lower_bound,
             'iCPA CI upper bound': icpa_upper_bound,
@@ -543,8 +587,8 @@ class Helpers(object):
             'iROAS estimate': iroas_estimate,
             'iROAS CI lower bound': iroas_lower_bound,
             'iROAS CI upper bound': iroas_upper_bound,
-            'rev/conversions control': rev_per_conversion_control,
-            'rev/conversions test': rev_per_conversion_test,
+            'revenue/conversions control': rev_per_conversion_control,
+            'revenue/conversions test': rev_per_conversion_test,
         }
 
         # return results as a dataframe
@@ -856,3 +900,113 @@ class _CSVHelpers(object):
             fs.put(file_name, s3_file_name)
 
         return df, test_users, control_users
+
+
+class _DisplayConverters(object):
+    @staticmethod
+    def _default_display(value):
+        return value
+
+    @staticmethod
+    def _count_display(value):
+        return int(round(value))
+
+    @staticmethod
+    def _percentage_display(value):
+        return '{}%'.format(round(value * 100, 2))
+
+    @staticmethod
+    def _currency_display(value):
+        return '{}€'.format(round(value, 2))
+
+    @staticmethod
+    def count_transform(df, column_names):
+        for column_name in column_names:
+            df[column_name] = df[column_name].apply(_DisplayConverters._count_display)
+
+        return df
+
+    @staticmethod
+    def percentage_transform(df, column_names):
+        for column_name in column_names:
+            df[column_name] = df[column_name].apply(_DisplayConverters._percentage_display)
+
+        return df
+
+    @staticmethod
+    def currency_transform(df, column_names):
+        for column_name in column_names:
+            df[column_name] = df[column_name].apply(_DisplayConverters._currency_display)
+
+        return df
+
+    @staticmethod
+    def _confidence_interval_transform(df, value_names, value_display=_default_display):
+        for value_name in value_names:
+            column_name = '{} estimate'.format(value_name)
+            lower_bound_name = '{} CI lower bound'.format(value_name)
+            upper_bound_name = '{} CI upper bound'.format(value_name)
+
+            def convert_ci(row):
+                if isinstance(row[column_name], str):
+                    return row[column_name]
+
+                ci_error = ''
+                if isinstance(row[lower_bound_name], str):
+                    ci_error = row[lower_bound_name]
+                if isinstance(row[upper_bound_name], str):
+                    ci_error = row[upper_bound_name]
+
+                if ci_error:
+                    return '{} [{}]'.format(value_display(row[column_name]), ci_error)
+
+                return '{} [{}, {}]'.format(
+                    value_display(row[column_name]),
+                    value_display(row[lower_bound_name]),
+                    value_display(row[upper_bound_name]),
+                )
+
+            df[column_name] = df.apply(
+                convert_ci,
+                axis=1,
+            )
+
+            rename_dict = dict()
+            rename_dict[column_name] = value_name
+
+            df = df.rename(columns=rename_dict)
+
+            df = df.drop(columns=[lower_bound_name, upper_bound_name])
+
+        return df
+
+    @staticmethod
+    def confidence_interval_default_transform(df, value_names):
+        return _DisplayConverters._confidence_interval_transform(
+            df=df,
+            value_names=value_names,
+        )
+
+    @staticmethod
+    def confidence_interval_count_transform(df, value_names):
+        return _DisplayConverters._confidence_interval_transform(
+            df=df,
+            value_names=value_names,
+            value_display=_DisplayConverters._count_display,
+        )
+
+    @staticmethod
+    def confidence_interval_percentage_transform(df, value_names):
+        return _DisplayConverters._confidence_interval_transform(
+            df=df,
+            value_names=value_names,
+            value_display=_DisplayConverters._percentage_display,
+        )
+
+    @staticmethod
+    def confidence_interval_currency_transform(df, value_names):
+        return _DisplayConverters._confidence_interval_transform(
+            df=df,
+            value_names=value_names,
+            value_display=_DisplayConverters._currency_display,
+        )
