@@ -17,6 +17,7 @@ setup(name='uplift_report_lib',
       include_package_data=True,
       python_requires='>=2.7,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*',
       install_requires=[
+          'IPython<7.9.0,>=5.5.0',
           'matplotlib<3.2.0,>=3.0.3',
           'numpy<1.18.0,>=1.16.4',
           'pandas<0.25.0,>=0.24.2',
