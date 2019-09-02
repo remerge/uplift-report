@@ -8,17 +8,33 @@ import s3fs
 import xxhash
 
 from datetime import datetime
+from IPython.display import display
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
-def log(*args):
+cache_folder = "cache-v{0}".format(__version__)
+
+
+def display(*args, **kwargs):
+    """
+    A wrapper over IPython display function
+
+    :param args:
+    :param kwargs:
+    :return:
+    """
+    display(*args, **kwargs)
+
+
+def log(*args, **kwargs):
     """
     Print something in a cleanly formatted fashion, with a timestamp
     :param args: A list of arguments to print. Internally, they will be passed to built-in print function
+    :param kwargs: A dict of named arguments to pass to the print function
 
     :return None
     """
-    print('[%s]:' % datetime.now(), *args)
+    print('[%s]:' % datetime.now(), *args, **kwargs)
 
 
 class Helpers(object):
@@ -187,6 +203,24 @@ class Helpers(object):
                 )
 
         return report_df
+
+    def display_report(self, report_df, raw=False):
+        """
+        Display the report
+
+        If `raw` is specified, the report would be displayed exactly like it would be exported, otherwise it would be
+        changed to be more human-readable
+
+        :param report_df: Report dataframe to display
+        :param raw: Whether to display `raw` report or its human-readable version
+
+        :type report_df: pandas.DataFrame
+        :type raw: bool
+
+        :return: None
+        """
+        pass
+
 
     @staticmethod
     def export_csv(df, file_name):
