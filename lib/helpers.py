@@ -1,4 +1,6 @@
 import os
+
+import IPython.display
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -8,7 +10,6 @@ import s3fs
 import xxhash
 
 from datetime import datetime
-from IPython.display import display
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
@@ -18,12 +19,8 @@ cache_folder = "cache-v{0}".format(__version__)
 def display(*args, **kwargs):
     """
     A wrapper over IPython display function
-
-    :param args:
-    :param kwargs:
-    :return:
     """
-    display(*args, **kwargs)
+    return IPython.display.display(*args, **kwargs)
 
 
 def log(*args, **kwargs):
