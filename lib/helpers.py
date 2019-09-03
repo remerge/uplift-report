@@ -352,23 +352,13 @@ class Helpers(object):
         :rtype: (float, float)
 
         """
-        # initialize the bootstrap samples
-        # b_means = np.zeros(self.bootstrap_size)
-        #
-        # for i in range(self.bootstrap_size):
-        #     b_means[i] = np.random.choice(sample, len(sample), replace=True).mean()
-
         bootstrapped_means = [np.random.choice(sample, len(sample), replace=True).mean() for _ in
                               range(self.bootstrap_size)]
 
-        # b_means.sort()
-
         bootstrapped_means.sort()
 
-        # l_bound = b_means[int(((1 - confidence_level) / 2) * (bootstrap_size + 1))]
         lower_bound = bootstrapped_means[int(((1 - self.confidence_level) / 2) * (self.bootstrap_size + 1))]
 
-        # u_bound = b_means[int(((1 - confidence_level) / 2 + confidence_level) * (bootstrap_size + 1))]
         upper_bound = bootstrapped_means[int(((1 - self.confidence_level) / 2 + self.confidence_level) *
                                              (self.bootstrap_size + 1))]
         if plot:
@@ -387,9 +377,7 @@ class Helpers(object):
         plt.vlines(sample_mean, ymin=0, ymax=self.bootstrap_size / 50, color='yellow')  # for the sample mean
         plt.show()
 
-    def _uplift(
-            self, marks_and_spend_df, attributions_df, index_name, plot_bootstrap_distribution=False
-    ):
+    def _uplift(self, marks_and_spend_df, attributions_df, index_name, plot_bootstrap_distribution=False):
         """
         Computes the uplift results. All incremental KPI estimates are accompanied by confidence intervals.
         Confidence intervals for revenue and conversions related numbers and KPIs will be estimated by bootstrapping, while
@@ -446,12 +434,12 @@ class Helpers(object):
 
         # Converter KPIs
         scaled_control_converters = float(control_converters) * ratio
-        no_treat_converters_l_bound = scipy.stats.binom.ppf(
+        no_treat_converters_lower_bound = scipy.stats.binom.ppf(
             (1 - self.confidence_level) / 2,
             control_group_size,
             control_converters / control_group_size,
         )
-        no_treat_converters_u_bound = scipy.stats.binom.ppf(
+        no_treat_converters_upper_bound = scipy.stats.binom.ppf(
             ((1 - self.confidence_level) / 2) + self.confidence_level,
             control_group_size,
             control_converters / control_group_size,
@@ -459,8 +447,8 @@ class Helpers(object):
 
         incremental_converters_estimate = test_converters - control_converters * ratio
 
-        incremental_converters_lower_bound = test_converters - no_treat_converters_u_bound * ratio
-        incremental_converters_upper_bound = test_converters - no_treat_converters_l_bound * ratio
+        incremental_converters_lower_bound = test_converters - no_treat_converters_upper_bound * ratio
+        incremental_converters_upper_bound = test_converters - no_treat_converters_lower_bound * ratio
 
         cost_per_incremental_converter_estimate = ad_spend / incremental_converters_estimate
 
@@ -476,18 +464,18 @@ class Helpers(object):
         # Conversion KPIs
         scaled_control_conversions = float(control_conversions) * ratio
 
-        mean_no_treat_conversions_l_bound, mean_no_treat_conversions_u_bound = self._bootstrap_mean_ci(
+        mean_control_conversions_lower_bound, mean_no_treat_conversions_upper_bound = self._bootstrap_mean_ci(
             sample=control_group_conversions_sample,
             plot=plot_bootstrap_distribution,
         )
 
-        scaled_no_treat_conversions_l_bound = mean_no_treat_conversions_l_bound * control_group_size * ratio
-        scaled_no_treat_conversions_u_bound = mean_no_treat_conversions_u_bound * control_group_size * ratio
+        scaled_no_treat_conversions_lower_bound = mean_control_conversions_lower_bound * control_group_size * ratio
+        scaled_no_treat_conversions_upper_bound = mean_no_treat_conversions_upper_bound * control_group_size * ratio
 
         incremental_conversions_estimate = test_conversions - scaled_control_conversions
 
-        incremental_conversions_lower_bound = test_conversions - scaled_no_treat_conversions_u_bound
-        incremental_conversions_upper_bound = test_conversions - scaled_no_treat_conversions_l_bound
+        incremental_conversions_lower_bound = test_conversions - scaled_no_treat_conversions_upper_bound
+        incremental_conversions_upper_bound = test_conversions - scaled_no_treat_conversions_lower_bound
 
         icpa_estimate = ad_spend / incremental_conversions_estimate
 
@@ -499,8 +487,8 @@ class Helpers(object):
         if icpa_upper_bound < 0:
             icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be interpreted'
 
-        no_treat_cvr_l_bound = scaled_no_treat_conversions_l_bound / test_group_size
-        no_treat_cvr_u_bound = scaled_no_treat_conversions_u_bound / test_group_size
+        no_treat_cvr_lower_bound = scaled_no_treat_conversions_lower_bound / test_group_size
+        no_treat_cvr_upper_bound = scaled_no_treat_conversions_upper_bound / test_group_size
 
         uplift_estimate = 0
 
@@ -510,8 +498,8 @@ class Helpers(object):
         if control_cvr > 0:
             uplift_estimate = test_cvr / control_cvr - 1
 
-            uplift_lower_bound = test_cvr / no_treat_cvr_u_bound - 1
-            uplift_upper_bound = test_cvr / no_treat_cvr_l_bound - 1
+            uplift_lower_bound = test_cvr / no_treat_cvr_upper_bound - 1
+            uplift_upper_bound = test_cvr / no_treat_cvr_lower_bound - 1
         else:
             uplift_lower_bound = uplift_upper_bound = 'Cannot calculate with 0 control CVR'
 
