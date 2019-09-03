@@ -54,6 +54,8 @@ class Helpers(object):
         of conversions (Default: false)
     :param use_deduplication: Enable deduplication heuristic for AppsFlyer (Default: False)
     :param confidence_level: Confidence level, required to calculate confidence intervals (Default: 0.95)
+    :param bootstrap_size: Number of bootstrap samples to construct confidence intervals. SHOULD be a large round
+        number, like 10000, 100000 etc. (Default: 10000)
 
     :type customer: str
     :type dates: pandas.DatetimeIndex
@@ -64,6 +66,7 @@ class Helpers(object):
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
     :type confidence_level: float
+    :type bootstrap_size: int
     """
 
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
