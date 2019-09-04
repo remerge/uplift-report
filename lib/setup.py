@@ -17,12 +17,14 @@ setup(name='uplift_report_lib',
       include_package_data=True,
       python_requires='>=2.7,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*',
       install_requires=[
-          'xxhash==1.3.0',
+          'gspread==3.0.1',
+          'oauth2client==4.1.3',
           'pandas==0.24.2',
           'scipy==1.3.0',
           's3fs==0.3.0',
           'pyarrow==0.14.0',
           'partd==1.0.0',
+          'xxhash==1.3.0',
       ],
       extras_require={
           'dev': [

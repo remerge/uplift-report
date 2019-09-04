@@ -7,7 +7,8 @@ import xxhash
 
 from datetime import datetime
 
-from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
+from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH, \
+    GOOGLE_SHEETS_OVERVIEW_URL
 
 cache_folder = "cache-v{0}".format(__version__)
 
@@ -50,6 +51,7 @@ class Helpers(object):
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
     """
+
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False):
 
@@ -201,6 +203,40 @@ class Helpers(object):
         except ImportError:
             # We are not in the colab, no need to run the download
             pass
+
+    def export_to_overview(self, report):
+        """
+        Export to Google Sheets overview
+
+        :param report: Report dataframe
+
+        :type report: pandas.DataFrame
+
+        :return: None
+        """
+        try:
+            from google.colab import auth
+        except ImportError:
+            raise RuntimeError('The notebook is not running in Google Colab, export to Google Sheets overview is '
+                               'impossible')
+
+        import gspread
+        from oauth2client.client import GoogleCredentials
+
+        auth.authenticate_user()
+        gc = gspread.authorize(GoogleCredentials.get_application_default())
+        worksheet = gc.open_by_url(GOOGLE_SHEETS_OVERVIEW_URL).sheet1
+        row = self._overview_row(report['total'])
+        worksheet.append_row(row)
+
+    def _overview_row(self, total):
+        return list([
+            self.customer,
+            ",".join(self.audiences),
+            self.dates[0].strftime('%Y-%m-%d'),
+            self.dates[-1].strftime('%Y-%m-%d'),
+            __version__,
+        ]) + list(total.values)
 
     @staticmethod
     def _extract_revenue_events(df, revenue_event):
