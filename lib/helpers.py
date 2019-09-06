@@ -451,7 +451,7 @@ class _CSVHelpers(object):
                                                     'event_type']
         self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
 
-    def _save_exported_ids(self, date, audience, test_users, control_users):
+    def _export_user_ids(self, date, audience, test_users, control_users):
         if self.export_user_ids:
             Helpers.export_csv(test_users, '{}_{}-{}.csv'.format(audience, date, 'test_users'))
             Helpers.export_csv(control_users, '{}_{}-{}.csv'.format(audience, date, 'control_users'))
@@ -522,13 +522,13 @@ class _CSVHelpers(object):
 
         if os.path.exists(cache_file_name):
             log('loading from', cache_file_name)
-            ret, testAndControl = self._from_parquet_corrected(
+            ret, test_users, control_users = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
-            self._save_exported_ids(date=date, audience=audience, test_users=testAndControl[0], control_users=testAndControl[1])
+            self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
             return ret
 
         if fs.exists(path=s3_cache_file_name):
@@ -540,13 +540,13 @@ class _CSVHelpers(object):
 
             log('stored S3 cache file to local drive, loading', cache_file_name)
 
-            ret, testAndControl = self._from_parquet_corrected(
+            ret, test_users, control_users = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
-            self._save_exported_ids(date=date, audience=audience, test_users=testAndControl[0], control_users=testAndControl[1])
+            self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
             return ret
 
         log('start loading CSV for', audience, source, date)
@@ -590,7 +590,7 @@ class _CSVHelpers(object):
 
         log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
 
-        self._save_exported_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
+        self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
 
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
@@ -658,4 +658,4 @@ class _CSVHelpers(object):
             _CSVHelpers._to_parquet(df=df, file_name=file_name)
             fs.put(file_name, s3_file_name)
 
-        return df, [test_users, control_users]
+        return df, test_users, control_users
