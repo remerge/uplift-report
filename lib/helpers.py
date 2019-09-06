@@ -96,7 +96,7 @@ class Helpers(object):
 
         self.confidence_level = confidence_level
 
-        if not bootstrap_size % 10:
+        if bootstrap_size % 10 == 0:
             # we have a round number, round number - 1 gives the best results
             self.bootstrap_size = bootstrap_size - 1
         else:
@@ -454,16 +454,31 @@ class Helpers(object):
         incremental_converters_lower_bound = test_converters - no_treat_converters_upper_bound * ratio
         incremental_converters_upper_bound = test_converters - no_treat_converters_lower_bound * ratio
 
-        cost_per_incremental_converter_estimate = ad_spend / incremental_converters_estimate
+        if incremental_converters_estimate != 0:
+            cost_per_incremental_converter_estimate = ad_spend / incremental_converters_estimate
 
-        cost_per_incremental_converter_lower_bound = ad_spend / incremental_converters_upper_bound
-        cost_per_incremental_converter_upper_bound = ad_spend / incremental_converters_lower_bound
+            if incremental_converters_upper_bound != 0:
+                cost_per_incremental_converter_lower_bound = ad_spend / incremental_converters_upper_bound
+            else:
+                cost_per_incremental_converter_lower_bound = 'Incremental converters CI upper bound is 0, cannot ' \
+                                                             'calculate cost CI lower bound'
 
-        if cost_per_incremental_converter_estimate < 0:
-            cost_per_incremental_converter_estimate = 'Negative incremental converters estimate'
-        if cost_per_incremental_converter_upper_bound < 0:
+            if incremental_converters_lower_bound != 0:
+                cost_per_incremental_converter_upper_bound = ad_spend / incremental_converters_lower_bound
+            else:
+                cost_per_incremental_converter_upper_bound = 'Incremental converters CI lower bound is 0, cannot ' \
+                                                             'calculate cost CI upper bound'
+
+            if cost_per_incremental_converter_estimate < 0:
+                cost_per_incremental_converter_estimate = 'Negative incremental converters estimate'
+            if cost_per_incremental_converter_upper_bound < 0:
+                cost_per_incremental_converter_lower_bound = cost_per_incremental_converter_upper_bound = \
+                    'CI contains negative value, cannot be interpreted'
+        else:
+            cost_per_incremental_converter_estimate = 'Incremental converters estimate is 0, cannot calculate the cost'
+
             cost_per_incremental_converter_lower_bound = cost_per_incremental_converter_upper_bound = \
-                'CI contains negative value, cannot be interpreted'
+                'Incremental converters estimate is 0, cannot calculate the cost CI'
 
         # Conversion KPIs
         scaled_control_conversions = float(control_conversions) * ratio
@@ -481,16 +496,29 @@ class Helpers(object):
         incremental_conversions_lower_bound = test_conversions - scaled_no_treat_conversions_upper_bound
         incremental_conversions_upper_bound = test_conversions - scaled_no_treat_conversions_lower_bound
 
-        icpa_estimate = ad_spend / incremental_conversions_estimate
+        if incremental_conversions_estimate != 0:
+            icpa_estimate = ad_spend / incremental_conversions_estimate
 
-        icpa_lower_bound = ad_spend / incremental_conversions_upper_bound
-        icpa_upper_bound = ad_spend / incremental_conversions_lower_bound
+            if incremental_conversions_upper_bound != 0:
+                icpa_lower_bound = ad_spend / incremental_conversions_upper_bound
+            else:
+                icpa_lower_bound = 'Incremental conversions CI upper bound is 0, cannot calculate iCPA CI lower bound'
 
-        if icpa_estimate < 0:
-            icpa_estimate = 'Negative incremental conversions estimate'
-        if icpa_upper_bound < 0:
-            icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be interpreted'
+            if incremental_conversions_lower_bound != 0:
+                icpa_upper_bound = ad_spend / incremental_conversions_lower_bound
+            else:
+                icpa_upper_bound = 'Incremental conversions CI lower bound is 0, cannot calculate iCPA CI upper bound'
 
+            if icpa_estimate < 0:
+                icpa_estimate = 'Negative incremental conversions estimate'
+            if icpa_upper_bound < 0:
+                icpa_lower_bound = icpa_upper_bound = 'CI contains negative value, cannot be interpreted'
+        else:
+            icpa_estimate = 'Incremental conversions estimate is 0, cannot calculate the iCPA'
+
+            icpa_lower_bound = icpa_upper_bound = 'Incremental conversions estimate is 0, cannot calculate the iCPA CI'
+
+        # 0s here should not happen, so we leave it without an explicit check
         no_treat_cvr_lower_bound = scaled_no_treat_conversions_lower_bound / test_group_size
         no_treat_cvr_upper_bound = scaled_no_treat_conversions_upper_bound / test_group_size
 
@@ -527,6 +555,7 @@ class Helpers(object):
         incremental_revenue_lower_bound = test_revenue - scaled_no_treat_revenue_upper_bound
         incremental_revenue_upper_bound = test_revenue - scaled_no_treat_revenue_lower_bound
 
+        # here we also should NEVER have a 0 - if we do, there is no point in running the analysis either way
         iroas_estimate = incremental_revenue_estimate / ad_spend
         iroas_lower_bound = incremental_revenue_lower_bound / ad_spend
         iroas_upper_bound = incremental_revenue_upper_bound / ad_spend
