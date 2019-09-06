@@ -645,6 +645,8 @@ class _CSVHelpers(object):
                 df = df.drop(columns=to_drop)
                 update_cache = True
 
+        test_users = pd.DataFrame()
+        control_users = pd.DataFrame()
         if self.export_user_ids:
             test_users = df[df['ab_test_group'] == TEST][['user_id']].drop_duplicates()
             control_users = df[df['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
