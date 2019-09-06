@@ -13,8 +13,6 @@ from datetime import datetime
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
-cache_folder = "cache-v{0}".format(__version__)
-
 
 def display(*args, **kwargs):
     """
@@ -808,10 +806,13 @@ class _CSVHelpers(object):
             filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
 
             if self.export_user_ids:
-                test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][['user_id']].drop_duplicates()
-                control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
+                test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][
+                    ['user_id']].drop_duplicates()
+                control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][
+                    ['user_id']].drop_duplicates()
                 test_users = pd.concat([test_users, test_users_chunk], ignore_index=True, verify_integrity=True)
-                control_users = pd.concat([control_users, control_users_chunk], ignore_index=True, verify_integrity=True)
+                control_users = pd.concat([control_users, control_users_chunk], ignore_index=True,
+                                          verify_integrity=True)
 
             filtered_chunk = self._improve_types(filtered_chunk)
 
