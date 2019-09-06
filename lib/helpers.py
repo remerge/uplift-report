@@ -211,7 +211,7 @@ class Helpers(object):
         changed to be more human-readable
 
         :param report_df: Report dataframe to display
-        :param raw: Whether to display `raw` report or its human-readable version
+        :param raw: Whether to display `raw` report or its human-readable version (Default: False)
 
         :type report_df: pandas.DataFrame
         :type raw: bool
@@ -341,7 +341,7 @@ class Helpers(object):
 
     def _bootstrap_mean_ci(self, sample, plot=False):
         """
-        Takes a sample and find the two-sided confidence interval of the sample, by bootstrap resampling.
+        Takes a sample and finds the two-sided confidence interval of the sample via bootstrap resampling.
 
         :param sample: The sample we have.
         :param plot: Whether to plot a histogram of the sample means with the calculated confidence interval
@@ -387,10 +387,13 @@ class Helpers(object):
         :param marks_and_spend_df: Dataframe containing information on marks and spend
         :param attributions_df: Dataframe with each entry being a conversion event
         :param index_name: Name of the data in question. To label the output and warning messages.
+        :param plot_bootstrap_distribution: Plot resulting confidence interval bootstrapped means distribution (Default:
+            False)
 
         :type marks_and_spend_df: pandas.DataFrame
         :type attributions_df: pandas.DataFrame
         :type index_name: str
+        :type plot_bootstrap_distribution: bool
 
         :return: Dataframe containing numbers and KPIs from the data.
         :rtype: pandas.DataFrame
