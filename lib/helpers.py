@@ -37,6 +37,7 @@ class Helpers(object):
     :param use_converters_for_significance: Base statistical calculations off of unique converters instead
         of conversions
     :param use_deduplication: Enable deduplication heuristic for AppsFlyer
+    :param csv_helpers_kwargs: A dict of named arguments to pass to _CSVHelpers class (Default: None)
 
     :type customer: str
     :type dates: pandas.DatetimeIndex
@@ -46,10 +47,11 @@ class Helpers(object):
     :type per_campaign_results: bool
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
+    :type csv_helpers_kwargs: dict[string, object]
     """
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
-                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False):
-
+                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False,
+                 csv_helpers_kwargs=None):
         self.customer = customer
 
         self.audiences = audiences
@@ -67,10 +69,14 @@ class Helpers(object):
 
         self.use_deduplication = use_deduplication
 
+        if csv_helpers_kwargs is None:
+            csv_helpers_kwargs = {}
+
         self._csv_helpers = _CSVHelpers(
             customer=self.customer,
             revenue_event=self.revenue_event,
             export_user_ids=export_user_ids,
+            **csv_helpers_kwargs,
         )
 
     @staticmethod
@@ -427,7 +433,7 @@ class Helpers(object):
 
 
 class _CSVHelpers(object):
-    def __init__(self, customer, revenue_event, chunk_size=10 ** 6, export_user_ids=False):
+    def __init__(self, customer, revenue_event, chunk_size=10 ** 3, export_user_ids=False):
         """
         Internal class, containing technical read-write related methods and helpers
         :param customer: Name of the customer the report is created for
