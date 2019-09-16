@@ -433,7 +433,7 @@ class Helpers(object):
 
 
 class _CSVHelpers(object):
-    def __init__(self, customer, revenue_event, chunk_size=10 ** 6, export_user_ids=False):
+    def __init__(self, customer, revenue_event, chunk_size=10 ** 3, export_user_ids=False):
         """
         Internal class, containing technical read-write related methods and helpers
         :param customer: Name of the customer the report is created for
