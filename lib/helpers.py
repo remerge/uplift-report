@@ -688,7 +688,10 @@ class _S3CachedFile(object):
         self.local_path = local_path
         if not self.local_path:
             import tempfile
-            _, tmp_path = tempfile.mkstemp()
+
+            original_extension = '.'.join(self.s3_path.split('/')[-1].split('.')[1:])
+
+            _, tmp_path = tempfile.mkstemp(suffix=original_extension)
 
             self.local_path = tmp_path
 
