@@ -573,6 +573,7 @@ class _CSVHelpers(object):
             return df
 
         with _S3CachedFile(fs, filename) as s3_file:
+            log('starting processing CSV for', date.strftime('%d.%m.%Y'))
             for chunk in pd.read_csv(s3_file.local_path, escapechar='\\', low_memory=False, **read_csv_kwargs):
                 if chunk_filter_fn:
                     filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
@@ -600,7 +601,7 @@ class _CSVHelpers(object):
                 df = pd.concat([df, filtered_chunk],
                                ignore_index=True, verify_integrity=True)
 
-        log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
+            log('finished processing CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
 
         self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
 
@@ -691,7 +692,7 @@ class _S3CachedFile(object):
 
             original_extension = '.'.join(self.s3_path.split('/')[-1].split('.')[1:])
 
-            _, tmp_path = tempfile.mkstemp(suffix=original_extension)
+            _, tmp_path = tempfile.mkstemp(suffix='.' + original_extension)
 
             self.local_path = tmp_path
 
@@ -706,7 +707,7 @@ class _S3CachedFile(object):
     def __enter__(self):
         self._del_local_file_if_exists()
 
-        log('beginning loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
+        log('starting loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
         # download it right away
         self.fs.get(self.s3_path, self.local_path)
         log('finished loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
