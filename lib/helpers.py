@@ -10,8 +10,6 @@ from datetime import datetime
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH, \
     GOOGLE_SHEETS_OVERVIEW_URL
 
-cache_folder = "cache-v{0}".format(__version__)
-
 
 def log(*args):
     """
@@ -41,6 +39,7 @@ class Helpers(object):
     :param use_converters_for_significance: Base statistical calculations off of unique converters instead
         of conversions
     :param use_deduplication: Enable deduplication heuristic for AppsFlyer
+    :param csv_helpers_kwargs: A dict of named arguments to pass to _CSVHelpers class (Default: None)
 
     :type customer: str
     :type dates: pandas.DatetimeIndex
@@ -50,11 +49,12 @@ class Helpers(object):
     :type per_campaign_results: bool
     :type use_converters_for_significance: bool
     :type use_deduplication: bool
+    :type csv_helpers_kwargs: dict[string, object]
     """
 
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
-                 use_converters_for_significance=False, use_deduplication=False):
-
+                 use_converters_for_significance=False, use_deduplication=False, export_user_ids=False,
+                 csv_helpers_kwargs=None):
         self.customer = customer
 
         self.audiences = audiences
@@ -72,9 +72,14 @@ class Helpers(object):
 
         self.use_deduplication = use_deduplication
 
+        if csv_helpers_kwargs is None:
+            csv_helpers_kwargs = {}
+
         self._csv_helpers = _CSVHelpers(
             customer=self.customer,
             revenue_event=self.revenue_event,
+            export_user_ids=export_user_ids,
+            **csv_helpers_kwargs,
         )
 
     @staticmethod
@@ -465,7 +470,7 @@ class Helpers(object):
 
 
 class _CSVHelpers(object):
-    def __init__(self, customer, revenue_event, chunk_size=10 ** 6):
+    def __init__(self, customer, revenue_event, chunk_size=10 ** 3, export_user_ids=False):
         """
         Internal class, containing technical read-write related methods and helpers
         :param customer: Name of the customer the report is created for
@@ -481,12 +486,18 @@ class _CSVHelpers(object):
         self.revenue_event = revenue_event
 
         self.chunk_size = chunk_size
+        self.export_user_ids = export_user_ids
 
         # columns to load from CSV
         self.columns = dict()
         self.columns[CSV_SOURCE_MARKS_AND_SPEND] = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur',
                                                     'event_type']
         self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
+
+    def _export_user_ids(self, date, audience, test_users, control_users):
+        if self.export_user_ids:
+            Helpers.export_csv(test_users, '{}_{}-{}.csv'.format(audience, date, 'test_users'))
+            Helpers.export_csv(control_users, '{}_{}-{}.csv'.format(audience, date, 'control_users'))
 
     def read_csv(self, audience, source, date, chunk_filter_fn=None):
         """
@@ -496,6 +507,10 @@ class _CSVHelpers(object):
         now = datetime.now()
 
         date_str = date.strftime('%Y%m%d')
+
+        cache_folder = "cache-v{0}".format(__version__)
+        if self.export_user_ids:
+            cache_folder += "-user-export"
 
         filename = '{0}/{1}/{2}.csv.gz'.format(
             self._audience_data_path(audience),
@@ -550,12 +565,14 @@ class _CSVHelpers(object):
 
         if os.path.exists(cache_file_name):
             log('loading from', cache_file_name)
-            return self._from_parquet_corrected(
+            ret, test_users, control_users = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
+            self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
+            return ret
 
         if fs.exists(path=s3_cache_file_name):
             log('loading from S3 cache', s3_cache_file_name)
@@ -566,44 +583,62 @@ class _CSVHelpers(object):
 
             log('stored S3 cache file to local drive, loading', cache_file_name)
 
-            return self._from_parquet_corrected(
+            ret, test_users, control_users = self._from_parquet_corrected(
                 file_name=cache_file_name,
                 s3_file_name=s3_cache_file_name,
                 fs=fs,
                 columns=columns,
             )
+            self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
+            return ret
 
         log('start loading CSV for', audience, source, date)
+        log('filename', filename)
 
         read_csv_kwargs = {'chunksize': self.chunk_size}
         if columns:
             read_csv_kwargs['usecols'] = columns
 
         df = pd.DataFrame()
+        test_users = pd.DataFrame()
+        control_users = pd.DataFrame()
 
         if not fs.exists(path=filename):
             log('WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
             return df
 
-        for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False, **read_csv_kwargs):
-            if chunk_filter_fn:
-                filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
-            else:
-                filtered_chunk = chunk
+        with _S3CachedFile(fs, filename) as s3_file:
+            log('starting processing CSV for', date.strftime('%d.%m.%Y'))
+            for chunk in pd.read_csv(s3_file.local_path, escapechar='\\', low_memory=False, **read_csv_kwargs):
+                if chunk_filter_fn:
+                    filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
+                else:
+                    filtered_chunk = chunk
 
-            if source != CSV_SOURCE_ATTRIBUTIONS:
-                # we are not interested in events that do not have a group amongst non-attribution events
-                filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
+                if source != CSV_SOURCE_ATTRIBUTIONS:
+                    # we are not interested in events that do not have a group amongst non-attribution events
+                    filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
 
-            # remove events without a user id
-            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
+                # remove events without a user id
+                filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
 
-            filtered_chunk = self._improve_types(filtered_chunk)
+                if self.export_user_ids:
+                    test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][
+                        ['user_id']].drop_duplicates()
+                    control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][
+                        ['user_id']].drop_duplicates()
+                    test_users = pd.concat([test_users, test_users_chunk], ignore_index=True, verify_integrity=True)
+                    control_users = pd.concat([control_users, control_users_chunk], ignore_index=True,
+                                              verify_integrity=True)
 
-            df = pd.concat([df, filtered_chunk],
-                           ignore_index=True, verify_integrity=True)
+                filtered_chunk = self._improve_types(filtered_chunk)
 
-        log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
+                df = pd.concat([df, filtered_chunk],
+                               ignore_index=True, verify_integrity=True)
+
+            log('finished processing CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
+
+        self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
 
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir)
@@ -643,15 +678,18 @@ class _CSVHelpers(object):
         return df
 
     @staticmethod
-    def _from_parquet(filename):
-        return pd.read_parquet(filename, engine='pyarrow')
+    def _from_parquet(filename, fs):
+        if filename.startswith('s3://'):
+            with _S3CachedFile(fs, filename) as s3_file:
+                return pd.read_parquet(s3_file.local_path, engine='pyarrow')
+        else:
+            return pd.read_parquet(filename, engine='pyarrow')
 
-    @staticmethod
-    def _from_parquet_corrected(file_name, s3_file_name, fs, columns):
+    def _from_parquet_corrected(self, file_name, s3_file_name, fs, columns):
         """
         A little "hack" to convert old file on the fly
         """
-        df = _CSVHelpers._from_parquet(file_name)
+        df = _CSVHelpers._from_parquet(file_name, fs)
         update_cache = False
         if columns:
             to_drop = list(set(df.columns.values) - set(columns))
@@ -659,13 +697,13 @@ class _CSVHelpers(object):
                 df = df.drop(columns=to_drop)
                 update_cache = True
 
-        # remove events without a user id
-        if df['user_id'].dtype == 'object':
-            if df[not df['user_id'].isnull()].empty or not df[df['user_id'].str.len() != USER_ID_LENGTH].empty:
-                df = df[df['user_id'].str.len() == USER_ID_LENGTH]
-                update_cache = True
+        test_users = pd.DataFrame()
+        control_users = pd.DataFrame()
+        if self.export_user_ids:
+            test_users = df[df['ab_test_group'] == TEST][['user_id']].drop_duplicates()
+            control_users = df[df['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
 
-        if df['user_id'].dtype != 'int64':
+        if df['ts'].dtype != 'int32':
             df = _CSVHelpers._improve_types(df)
             update_cache = True
 
@@ -674,4 +712,42 @@ class _CSVHelpers(object):
             _CSVHelpers._to_parquet(df=df, file_name=file_name)
             fs.put(file_name, s3_file_name)
 
-        return df
+        return df, test_users, control_users
+
+
+class _S3CachedFile(object):
+    def __init__(self, fs, s3_path, local_path=None):
+        self.fs = fs
+
+        self.s3_path = s3_path
+
+        self.local_path = local_path
+        if not self.local_path:
+            import tempfile
+
+            original_extension = '.'.join(self.s3_path.split('/')[-1].split('.')[1:])
+
+            _, tmp_path = tempfile.mkstemp(suffix='.' + original_extension)
+
+            self.local_path = tmp_path
+
+    def _del_local_file_if_exists(self):
+        if os.path.isfile(self.local_path):
+            # delete the local cache
+            os.remove(self.local_path)
+
+    def __del__(self):
+        self._del_local_file_if_exists()
+
+    def __enter__(self):
+        self._del_local_file_if_exists()
+
+        log('starting loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
+        # download it right away
+        self.fs.get(self.s3_path, self.local_path)
+        log('finished loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._del_local_file_if_exists()
