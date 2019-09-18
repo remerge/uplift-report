@@ -9,6 +9,7 @@ from datetime import datetime
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
+
 def log(*args):
     """
     Print something in a cleanly formatted fashion, with a timestamp
@@ -49,6 +50,7 @@ class Helpers(object):
     :type use_deduplication: bool
     :type csv_helpers_kwargs: dict[string, object]
     """
+
     def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False, export_user_ids=False,
                  csv_helpers_kwargs=None):
@@ -570,31 +572,36 @@ class _CSVHelpers(object):
             log('WARNING: no CSV file at for: ', audience, source, date, ', skipping the file: ', filename)
             return df
 
-        for chunk in pd.read_csv(filename, escapechar='\\', low_memory=False, **read_csv_kwargs):
-            if chunk_filter_fn:
-                filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
-            else:
-                filtered_chunk = chunk
+        with _S3CachedFile(fs, filename) as s3_file:
+            log('starting processing CSV for', date.strftime('%d.%m.%Y'))
+            for chunk in pd.read_csv(s3_file.local_path, escapechar='\\', low_memory=False, **read_csv_kwargs):
+                if chunk_filter_fn:
+                    filtered_chunk = chunk_filter_fn(chunk, self.revenue_event)
+                else:
+                    filtered_chunk = chunk
 
-            if source != CSV_SOURCE_ATTRIBUTIONS:
-                # we are not interested in events that do not have a group amongst non-attribution events
-                filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
+                if source != CSV_SOURCE_ATTRIBUTIONS:
+                    # we are not interested in events that do not have a group amongst non-attribution events
+                    filtered_chunk = filtered_chunk[filtered_chunk['ab_test_group'].isin(['test', 'control'])]
 
-            # remove events without a user id
-            filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
+                # remove events without a user id
+                filtered_chunk = filtered_chunk[filtered_chunk['user_id'].str.len() == USER_ID_LENGTH]
 
-            if self.export_user_ids:
-                test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][['user_id']].drop_duplicates()
-                control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][['user_id']].drop_duplicates()
-                test_users = pd.concat([test_users, test_users_chunk], ignore_index=True, verify_integrity=True)
-                control_users = pd.concat([control_users, control_users_chunk], ignore_index=True, verify_integrity=True)
+                if self.export_user_ids:
+                    test_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == TEST][
+                        ['user_id']].drop_duplicates()
+                    control_users_chunk = filtered_chunk[filtered_chunk['ab_test_group'] == CONTROL][
+                        ['user_id']].drop_duplicates()
+                    test_users = pd.concat([test_users, test_users_chunk], ignore_index=True, verify_integrity=True)
+                    control_users = pd.concat([control_users, control_users_chunk], ignore_index=True,
+                                              verify_integrity=True)
 
-            filtered_chunk = self._improve_types(filtered_chunk)
+                filtered_chunk = self._improve_types(filtered_chunk)
 
-            df = pd.concat([df, filtered_chunk],
-                           ignore_index=True, verify_integrity=True)
+                df = pd.concat([df, filtered_chunk],
+                               ignore_index=True, verify_integrity=True)
 
-        log('finished loading CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
+            log('finished processing CSV for', date.strftime('%d.%m.%Y'), 'took', datetime.now() - now)
 
         self._export_user_ids(date=date, audience=audience, test_users=test_users, control_users=control_users)
 
@@ -636,14 +643,18 @@ class _CSVHelpers(object):
         return df
 
     @staticmethod
-    def _from_parquet(filename):
-        return pd.read_parquet(filename, engine='pyarrow')
+    def _from_parquet(filename, fs):
+        if filename.startswith('s3://'):
+            with _S3CachedFile(fs, filename) as s3_file:
+                return pd.read_parquet(s3_file.local_path, engine='pyarrow')
+        else:
+            return pd.read_parquet(filename, engine='pyarrow')
 
     def _from_parquet_corrected(self, file_name, s3_file_name, fs, columns):
         """
         A little "hack" to convert old file on the fly
         """
-        df = _CSVHelpers._from_parquet(file_name)
+        df = _CSVHelpers._from_parquet(file_name, fs)
         update_cache = False
         if columns:
             to_drop = list(set(df.columns.values) - set(columns))
@@ -667,3 +678,41 @@ class _CSVHelpers(object):
             fs.put(file_name, s3_file_name)
 
         return df, test_users, control_users
+
+
+class _S3CachedFile(object):
+    def __init__(self, fs, s3_path, local_path=None):
+        self.fs = fs
+
+        self.s3_path = s3_path
+
+        self.local_path = local_path
+        if not self.local_path:
+            import tempfile
+
+            original_extension = '.'.join(self.s3_path.split('/')[-1].split('.')[1:])
+
+            _, tmp_path = tempfile.mkstemp(suffix='.' + original_extension)
+
+            self.local_path = tmp_path
+
+    def _del_local_file_if_exists(self):
+        if os.path.isfile(self.local_path):
+            # delete the local cache
+            os.remove(self.local_path)
+
+    def __del__(self):
+        self._del_local_file_if_exists()
+
+    def __enter__(self):
+        self._del_local_file_if_exists()
+
+        log('starting loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
+        # download it right away
+        self.fs.get(self.s3_path, self.local_path)
+        log('finished loading s3 file by path', self.s3_path, 'to local cache', self.local_path)
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._del_local_file_if_exists()
