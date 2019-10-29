@@ -29,7 +29,8 @@ class Helpers(object):
     :param customer: Name of the customer the report is created for
     :param audiences: A list of audiences for which the report is going to be calculated
     :param revenue_event: An event which is going to be taken as a revenue event, e.g. "purchase"
-    :param dates: Date range, for which the report is to be generated (use pandas.date_range to generate a range)
+    :param dates: Date range of marks & spend, for which the report is to be generated (use pandas.date_range to generate a range)
+    :param attribution_dates: Optional date range of attributions defaults to dates (use pandas.date_range to generate a range)
     :param groups: An optional dictionary of named campaign groups, by which the report should be split. Example:
             {
                 "All US campaigns": [1234, 3456, 5678],
@@ -43,6 +44,7 @@ class Helpers(object):
 
     :type customer: str
     :type dates: pandas.DatetimeIndex
+    :type attribution_dates: pandas.DatetimeIndex
     :type audiences: list[str]
     :type revenue_event: str
     :type groups: dict[str, list[int]]|None
@@ -52,7 +54,7 @@ class Helpers(object):
     :type csv_helpers_kwargs: dict[string, object]
     """
 
-    def __init__(self, customer, audiences, revenue_event, dates, groups=None, per_campaign_results=False,
+    def __init__(self, customer, audiences, revenue_event, dates, attribution_dates=None, groups=None, per_campaign_results=False,
                  use_converters_for_significance=False, use_deduplication=False, export_user_ids=False,
                  csv_helpers_kwargs=None):
         self.customer = customer
@@ -60,6 +62,9 @@ class Helpers(object):
         self.audiences = audiences
 
         self.dates = dates
+        self.attribution_dates = attribution_dates
+        if self.attribution_dates is None:
+            self.attribution_dates = dates
 
         self.revenue_event = revenue_event
 
@@ -126,7 +131,7 @@ class Helpers(object):
                     chunk_filter_fn=self._extract_revenue_events,
                 ),
                 user_ids=marked_user_ids,
-            ) for audience in self.audiences for date in self.dates],
+            ) for audience in self.audiences for date in self.attribution_dates],
             ignore_index=True,
             verify_integrity=True,
         )
