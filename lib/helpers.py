@@ -205,9 +205,12 @@ class Helpers(object):
 
         number_of_users_with_double_marks = len(users_with_double_marks)
 
-        percentage_removed = (number_of_users_with_double_marks / marks_and_spend_df['user_id'].nunique()) * 100
+        if number_of_users_with_double_marks > 0:
+            percentage_removed = (number_of_users_with_double_marks / marks_and_spend_df['user_id'].nunique()) * 100
 
-        log("Removed %s users (%.5f%%) due to double marking." % (number_of_users_with_double_marks, percentage_removed))
+            log("Removed %s users (%.5f%%) due to double marking." % (number_of_users_with_double_marks, percentage_removed))
+        else:
+            log("No users were double marked")
 
         return marks_and_spend_df[~marks_and_spend_df['user_id'].isin(users_with_double_marks['user_id'])]
 
