@@ -197,8 +197,9 @@ class Helpers(object):
         :return: Dataframe without users marked as both test and control
         :rtype: pandas.DataFrame
         """
-        user_to_ab_test_group_count = marks_and_spend_df[marks_and_spend_df['event_type'] == 'mark'] \
-            .groupby('user_id', as_index=False).agg({'ab_test_group': pd.Series.nunique })
+        user_to_ab_test_group_count = (marks_and_spend_df[marks_and_spend_df['event_type'] == 'mark']
+            .groupby('user_id', as_index=False)
+            .agg({'ab_test_group': pd.Series.nunique }))
 
         users_with_double_marks = user_to_ab_test_group_count[user_to_ab_test_group_count['ab_test_group'] > 1]
 
