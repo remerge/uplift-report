@@ -187,6 +187,33 @@ class Helpers(object):
 
         return report_df
 
+    def remove_users_marked_as_control_and_test(self, marks_and_spend_df):
+        """
+        Remove users that have been added to both the test and control group.
+
+        :param marks_and_spend_df: Marks and spend dataframe
+        :type marks_and_spend_df: pandas.DataFrame
+
+        :return: Dataframe without users marked as both test and control
+        :rtype: pandas.DataFrame
+        """
+        user_to_ab_test_group_count = (marks_and_spend_df[marks_and_spend_df['event_type'] == 'mark']
+            .groupby('user_id', as_index=False)
+            .agg({'ab_test_group': pd.Series.nunique }))
+
+        users_with_double_marks = user_to_ab_test_group_count[user_to_ab_test_group_count['ab_test_group'] > 1]
+
+        number_of_users_with_double_marks = len(users_with_double_marks)
+
+        if number_of_users_with_double_marks > 0:
+            percentage_removed = (number_of_users_with_double_marks / marks_and_spend_df['user_id'].nunique()) * 100
+
+            log("Removed %s users (%.5f%%) due to double marking." % (number_of_users_with_double_marks, percentage_removed))
+        else:
+            log("No users were double marked")
+
+        return marks_and_spend_df[~marks_and_spend_df['user_id'].isin(users_with_double_marks['user_id'])]
+
     @staticmethod
     def export_csv(df, file_name):
         """
