@@ -281,6 +281,7 @@ class Helpers(object):
         # Remove rows if the previous row has the same revenue_eur and user id and the ts are less than max_timedelta
         # apart
         filtered = sorted_values[
+            (sorted_values['appsflyer_deduplicated']) |
             (sorted_values['user_id'] != sorted_values['last_user_id']) |
             (sorted_values['revenue_eur'] != sorted_values['last_revenue']) |
             ((pd.to_datetime(sorted_values['ts']) - pd.to_datetime(sorted_values['last_ts'])) > max_timedelta)]
