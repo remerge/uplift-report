@@ -281,7 +281,7 @@ class Helpers(object):
         # Remove rows if the previous row has the same revenue_eur and user id and the ts are less than max_timedelta
         # apart
         filtered = sorted_values[
-            (sorted_values['appsflyer_deduplicated']) |
+            ('appsflyer_deduplicated' in sorted_values.columns and sorted_values['appsflyer_deduplicated']) |
             (sorted_values['user_id'] != sorted_values['last_user_id']) |
             (sorted_values['revenue_eur'] != sorted_values['last_revenue']) |
             ((pd.to_datetime(sorted_values['ts']) - pd.to_datetime(sorted_values['last_ts'])) > max_timedelta)]
@@ -490,7 +490,8 @@ class _CSVHelpers(object):
         self.columns = dict()
         self.columns[CSV_SOURCE_MARKS_AND_SPEND] = ['ts', 'user_id', 'ab_test_group', 'campaign_id', 'cost_eur',
                                                     'event_type']
-        self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event', 'revenue_eur']
+        self.columns[CSV_SOURCE_ATTRIBUTIONS] = ['ts', 'user_id', 'partner_event',
+                                                 'revenue_eur', 'appsflyer_deduplicated']
 
     def _export_user_ids(self, date, audience, test_users, control_users):
         if self.export_user_ids:
@@ -595,7 +596,7 @@ class _CSVHelpers(object):
 
         read_csv_kwargs = {'chunksize': self.chunk_size}
         if columns:
-            read_csv_kwargs['usecols'] = columns
+            read_csv_kwargs['usecols'] = lambda c: c in columns
 
         df = pd.DataFrame()
         test_users = pd.DataFrame()
