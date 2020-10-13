@@ -9,6 +9,8 @@ from datetime import datetime
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
+appsflyer_start_deduplication_day_str = '17.09.2020'
+appsflyer_start_deduplication_day = datetime.datetime.strptime(appsflyer_start_deduplication_day_str, '%d.%m.%Y')
 
 def log(*args):
     """
@@ -282,6 +284,7 @@ class Helpers(object):
         # apart
         filtered = sorted_values[
             ('appsflyer_deduplicated' in sorted_values.columns and sorted_values['appsflyer_deduplicated']) |
+            (sorted_values['ts'] >= appsflyer_start_deduplication_day) |
             (sorted_values['user_id'] != sorted_values['last_user_id']) |
             (sorted_values['revenue_eur'] != sorted_values['last_revenue']) |
             ((pd.to_datetime(sorted_values['ts']) - pd.to_datetime(sorted_values['last_ts'])) > max_timedelta)]
