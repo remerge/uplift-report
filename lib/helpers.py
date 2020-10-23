@@ -9,6 +9,7 @@ from datetime import datetime
 
 from lib.const import __version__, TEST, CONTROL, CSV_SOURCE_MARKS_AND_SPEND, CSV_SOURCE_ATTRIBUTIONS, USER_ID_LENGTH
 
+START_APPSFLYER_SIDE_DEDUPLICATION = '17.09.2020'
 
 def log(*args):
     """
@@ -273,6 +274,12 @@ class Helpers(object):
         """
         sorted_values = df.sort_values(['user_id', 'revenue_eur'])
 
+        pdDedupStarts = pd.Timestamp(START_APPSFLYER_SIDE_DEDUPLICATION).tz_localize(None)
+
+        time_condition = pd.DatetimeIndex(pd.to_datetime(sorted_values['ts'])).tz_localize(None) >= pdDedupStarts
+        filtered_by_time = sorted_values[time_condition]
+        sorted_values = sorted_values[~time_condition]
+
         # Get values of the previous row
         sorted_values['last_ts'] = sorted_values['ts'].shift(1)
         sorted_values['last_user_id'] = sorted_values['user_id'].shift(1)
@@ -286,7 +293,9 @@ class Helpers(object):
             (sorted_values['revenue_eur'] != sorted_values['last_revenue']) |
             ((pd.to_datetime(sorted_values['ts']) - pd.to_datetime(sorted_values['last_ts'])) > max_timedelta)]
 
-        return filtered[['ts', 'user_id', 'revenue_eur']]
+        filtered = filtered[['ts', 'user_id', 'revenue_eur']]
+
+        return pd.concat([filtered, filtered_by_time])
 
     def _uplift(self, marks_and_spend_df, attributions_df, index_name, m_hypothesis=1):
         """
