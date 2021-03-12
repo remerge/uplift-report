@@ -4,6 +4,9 @@ import scipy
 import scipy.stats
 import s3fs
 import xxhash
+import gspread
+from oauth2client.client import GoogleCredentials
+
 
 from datetime import datetime
 
@@ -241,6 +244,44 @@ class Helpers(object):
             # We are not in the colab, no need to run the download
             pass
 
+    # https://www.danielecook.com/from-pandas-to-google-sheets/
+    @staticmethod
+    def iter_pd(df):
+        for val in df.columns:
+            yield val
+        for row in df.to_numpy():
+            for val in row:
+                if pd.isna(val):
+                    yield ""
+                else:
+                    yield val
+
+    # https://www.danielecook.com/from-pandas-to-google-sheets/
+    @staticmethod
+    def pandas_to_sheets(pandas_df, sheet, clear = True,formulas=[]):
+        # Updates all values in a workbook to match a pandas dataframe
+        if clear:
+            sheet.clear()
+        (row, col) = pandas_df.shape
+        cells = sheet.range("A1:{}".format(gspread.utils.rowcol_to_a1(row + 1, col)))
+
+        for cell, val in zip(cells, Helpers.iter_pd(pandas_df)):
+            cell.value = val
+            sheet.update_cells(cells)
+
+    @staticmethod
+    def export_df_to_sheet(df):
+        try:
+            from google.colab import auth
+        except ImportError:
+            raise RuntimeError('The notebook is not running in Google Colab, export to Google Sheets overview is '
+                               'impossible')
+
+        auth.authenticate_user()
+        gc = gspread.authorize(GoogleCredentials.get_application_default())
+        sheet = gc.open_by_url('https://docs.google.com/spreadsheets/d/1-2OW4SG0CjNpVQ42bHILRbX4y411hWZCtf-nx_AW7jQ/edit#gid=0').sheet1
+        Helpers.pandas_to_sheets(df, sheet)
+
     def export_to_overview(self, report):
         """
         Export to Google Sheets overview
@@ -257,14 +298,12 @@ class Helpers(object):
             raise RuntimeError('The notebook is not running in Google Colab, export to Google Sheets overview is '
                                'impossible')
 
-        import gspread
-        from oauth2client.client import GoogleCredentials
-
         auth.authenticate_user()
         gc = gspread.authorize(GoogleCredentials.get_application_default())
         worksheet = gc.open_by_url(GOOGLE_SHEETS_OVERVIEW_URL).sheet1
         row = self._overview_row(report['total'])
         worksheet.append_row(row)
+        print(row)
 
     def _overview_row(self, total):
         return list([
