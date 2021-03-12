@@ -20,11 +20,14 @@ setup(name='uplift_report_lib',
           'gspread<3.1.0,>=3.0.1',
           'oauth2client<4.2.0,>=4.1.3',
           'pandas<0.25.0,>=0.24.2',
-          'scipy<1.4.0,>=1.3.0',
+          'scipy==1.4.1',
           's3fs<0.4.0,>=0.3.0',
           'pyarrow<0.15.0,>=0.14.0',
           'partd<1.1.0,>=1.0.0',
           'xxhash<1.4.0,>=1.3.0',
+          'pydrive==1.3.1',
+          'rpy2==3.3.2',
+          'matplotlib==3.3.4'
       ],
       extras_require={
           'dev': [
