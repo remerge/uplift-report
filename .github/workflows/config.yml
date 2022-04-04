@@ -1,0 +1,23 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  lint_and_test:
+    runs-on: ubuntu-latest
+    name: test
+    strategy:
+      matrix:
+        python_version: ["3.5", "3.6", "3.7"]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      - run: |
+          cd lib
+          pip install -U pip
+          pip install -e .[dev]
+          python -m flake8 lib/
